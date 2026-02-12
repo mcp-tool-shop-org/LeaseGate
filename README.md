@@ -71,6 +71,18 @@ Typical app integration uses `LeaseGateClient`, an `IModelProvider` adapter, and
 
 See [docs/Protocol.md](docs/Protocol.md) and [docs/Architecture.md](docs/Architecture.md).
 
+## Migration Quickstart
+
+Upgrading from Phase 1 to Phase 2:
+
+1. Populate new acquire fields (`requestedContextTokens`, `requestedRetrievedChunks`, `estimatedToolOutputTokens`, `estimatedComputeUnits`, `requestedTools`).
+2. Read `AcquireLeaseResponse.constraints` and enforce overrides/caps in your execution path.
+3. Send richer release telemetry (`latencyMs`, `providerErrorClassification`, `toolCalls[]`).
+4. Handle `ApprovalRequiredException` by requesting/granting approval and retrying with `approvalToken`.
+5. Prefer adapter-based execution via `IModelProvider` + `GovernedModelCall.ExecuteProviderCallAsync(...)`.
+
+Full checklist: [CHANGELOG.md](CHANGELOG.md) under **0.2.0 → Integration Migration Checklist**.
+
 ## Configuration
 
 Sample policy lives at:
