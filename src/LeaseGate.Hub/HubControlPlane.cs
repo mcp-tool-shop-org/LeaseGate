@@ -9,23 +9,57 @@ namespace LeaseGate.Hub;
 public sealed class HubControlPlane : IDisposable
 {
     private readonly LeaseGovernor _governor;
+    private readonly IPolicyEngine _policy;
+    private readonly DistributedQuotaManager _quotas = new();
+    private readonly Dictionary<string, AcquireLeaseRequest> _leaseRequests = new(StringComparer.Ordinal);
 
     public HubControlPlane(LeaseGovernorOptions options, string policyPath, IAuditWriter? auditWriter = null, ToolRegistry? tools = null)
     {
-        var policy = new PolicyEngine(policyPath, hotReload: false);
-        _governor = new LeaseGovernor(options, policy, auditWriter ?? new HubNoopAuditWriter(), tools);
+        _policy = new PolicyEngine(policyPath, hotReload: false);
+        _governor = new LeaseGovernor(options, _policy, auditWriter ?? new HubNoopAuditWriter(), tools);
     }
 
     public async Task<AcquireLeaseResponse> AcquireAsync(AcquireLeaseRequest request, CancellationToken cancellationToken)
     {
+        if (!_quotas.TryAcquire(request, _policy.CurrentSnapshot.Policy, out var denyReason, out var retryAfterMs, out var nextRefillUtc))
+        {
+            return new AcquireLeaseResponse
+            {
+                Granted = false,
+                DeniedReason = denyReason,
+                RetryAfterMs = retryAfterMs,
+                Recommendation = nextRefillUtc is null
+                    ? "retry after budget/rate replenishes"
+                    : $"next refill at {nextRefillUtc.Value:O}",
+                IdempotencyKey = request.IdempotencyKey,
+                PolicyVersion = _policy.CurrentSnapshot.Policy.PolicyVersion,
+                PolicyHash = _policy.CurrentSnapshot.PolicyHash,
+                OrgId = request.OrgId,
+                PrincipalType = request.PrincipalType,
+                Role = request.Role,
+                LeaseLocality = LeaseLocality.HubIssued
+            };
+        }
+
         var response = await _governor.AcquireAsync(request, cancellationToken);
         response.LeaseLocality = LeaseLocality.HubIssued;
+        if (response.Granted)
+        {
+            _leaseRequests[response.LeaseId] = request;
+        }
         return response;
     }
 
-    public Task<ReleaseLeaseResponse> ReleaseAsync(ReleaseLeaseRequest request, CancellationToken cancellationToken)
+    public async Task<ReleaseLeaseResponse> ReleaseAsync(ReleaseLeaseRequest request, CancellationToken cancellationToken)
     {
-        return _governor.ReleaseAsync(request, cancellationToken);
+        var response = await _governor.ReleaseAsync(request, cancellationToken);
+        if (_leaseRequests.TryGetValue(request.LeaseId, out var acquireRequest))
+        {
+            _quotas.Release(acquireRequest);
+            _leaseRequests.Remove(request.LeaseId);
+        }
+
+        return response;
     }
 
     public MetricsSnapshot GetMetrics() => _governor.GetMetricsSnapshot();

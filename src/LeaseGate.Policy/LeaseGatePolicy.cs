@@ -14,6 +14,17 @@ public sealed class LeaseGatePolicy
     public int MaxToolOutputTokens { get; set; } = 4_000;
     public int MaxToolCallsPerLease { get; set; } = 6;
     public int MaxComputeUnits { get; set; } = 8;
+    public int OrgDailyBudgetCents { get; set; } = 0;
+    public int OrgMaxRequestsPerMinute { get; set; } = 0;
+    public int OrgMaxTokensPerMinute { get; set; } = 0;
+    public Dictionary<string, int> WorkspaceDailyBudgetCents { get; set; } = new();
+    public Dictionary<string, int> WorkspaceMaxRequestsPerMinute { get; set; } = new();
+    public Dictionary<string, int> WorkspaceMaxTokensPerMinute { get; set; } = new();
+    public Dictionary<string, int> ActorDailyBudgetCents { get; set; } = new();
+    public int ActorMaxRequestsPerMinute { get; set; } = 0;
+    public int ActorMaxTokensPerMinute { get; set; } = 0;
+    public int MaxInFlightPerActor { get; set; } = 0;
+    public Dictionary<Role, int> RoleMaxInFlightOverrides { get; set; } = new();
     public List<string> AllowedModels { get; set; } = new();
     public Dictionary<ActionType, List<string>> AllowedCapabilities { get; set; } = new();
     public Dictionary<Role, Dictionary<ActionType, List<string>>> AllowedCapabilitiesByRole { get; set; } = new();
