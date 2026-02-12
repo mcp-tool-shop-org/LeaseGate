@@ -45,6 +45,36 @@ public sealed class LeaseGateClient
         return SendAsync<object, MetricsSnapshot>("GetMetrics", new { }, cancellationToken);
     }
 
+    public Task<GovernorStatusResponse> GetStatusAsync(CancellationToken cancellationToken)
+    {
+        return SendAsync<object, GovernorStatusResponse>("GetStatus", new { }, cancellationToken);
+    }
+
+    public Task<ExportDiagnosticsResponse> ExportDiagnosticsAsync(ExportDiagnosticsRequest request, CancellationToken cancellationToken)
+    {
+        return SendAsync<ExportDiagnosticsRequest, ExportDiagnosticsResponse>("ExportDiagnostics", request, cancellationToken);
+    }
+
+    public Task<StagePolicyBundleResponse> StagePolicyBundleAsync(PolicyBundle bundle, CancellationToken cancellationToken)
+    {
+        return SendAsync<PolicyBundle, StagePolicyBundleResponse>("StagePolicyBundle", bundle, cancellationToken);
+    }
+
+    public Task<ActivatePolicyResponse> ActivatePolicyAsync(ActivatePolicyRequest request, CancellationToken cancellationToken)
+    {
+        return SendAsync<ActivatePolicyRequest, ActivatePolicyResponse>("ActivatePolicy", request, cancellationToken);
+    }
+
+    public Task<ToolSubLeaseResponse> RequestToolSubLeaseAsync(ToolSubLeaseRequest request, CancellationToken cancellationToken)
+    {
+        return SendAsync<ToolSubLeaseRequest, ToolSubLeaseResponse>("RequestToolSubLease", request, cancellationToken);
+    }
+
+    public Task<ToolExecutionResponse> ExecuteToolCallAsync(ToolExecutionRequest request, CancellationToken cancellationToken)
+    {
+        return SendAsync<ToolExecutionRequest, ToolExecutionResponse>("ExecuteToolCall", request, cancellationToken);
+    }
+
     public async Task<ReleaseLeaseResponse> ReleaseAsync(ReleaseLeaseRequest request, CancellationToken cancellationToken)
     {
         if (_localLeaseIds.Remove(request.LeaseId))

@@ -31,6 +31,8 @@ public sealed class AcquireLeaseResponse
     public int? RetryAfterMs { get; set; }
     public string Recommendation { get; set; } = string.Empty;
     public string IdempotencyKey { get; set; } = string.Empty;
+    public string PolicyVersion { get; set; } = string.Empty;
+    public string PolicyHash { get; set; } = string.Empty;
 }
 
 public sealed class LeaseConstraints
@@ -67,6 +69,7 @@ public sealed class ReleaseLeaseRequest
 public sealed class ToolCallUsage
 {
     public string ToolId { get; set; } = string.Empty;
+    public string ToolSubLeaseId { get; set; } = string.Empty;
     public ToolCategory Category { get; set; }
     public long DurationMs { get; set; }
     public long BytesIn { get; set; }
@@ -74,11 +77,76 @@ public sealed class ToolCallUsage
     public LeaseOutcome Outcome { get; set; } = LeaseOutcome.Success;
 }
 
+public sealed class ToolSubLeaseRequest
+{
+    public string LeaseId { get; set; } = string.Empty;
+    public string ToolId { get; set; } = string.Empty;
+    public ToolCategory Category { get; set; }
+    public int RequestedCalls { get; set; } = 1;
+    public int TimeoutMs { get; set; } = 2_000;
+    public long MaxOutputBytes { get; set; } = 16_384;
+    public string IdempotencyKey { get; set; } = string.Empty;
+}
+
+public sealed class ToolSubLeaseResponse
+{
+    public bool Granted { get; set; }
+    public string ToolSubLeaseId { get; set; } = string.Empty;
+    public DateTimeOffset ExpiresAtUtc { get; set; }
+    public int AllowedCalls { get; set; }
+    public int TimeoutMs { get; set; }
+    public long MaxOutputBytes { get; set; }
+    public string DeniedReason { get; set; } = string.Empty;
+    public string Recommendation { get; set; } = string.Empty;
+    public string IdempotencyKey { get; set; } = string.Empty;
+}
+
+public sealed class ToolExecutionRequest
+{
+    public string LeaseId { get; set; } = string.Empty;
+    public string ToolSubLeaseId { get; set; } = string.Empty;
+    public string ToolId { get; set; } = string.Empty;
+    public ToolCategory Category { get; set; }
+    public string TargetPath { get; set; } = string.Empty;
+    public string TargetHost { get; set; } = string.Empty;
+    public string CommandText { get; set; } = string.Empty;
+    public int TimeoutMs { get; set; } = 1_000;
+    public long MaxOutputBytes { get; set; } = 8_192;
+    public string IdempotencyKey { get; set; } = string.Empty;
+}
+
+public sealed class ToolExecutionResponse
+{
+    public bool Allowed { get; set; }
+    public LeaseOutcome Outcome { get; set; }
+    public string DeniedReason { get; set; } = string.Empty;
+    public string Recommendation { get; set; } = string.Empty;
+    public long OutputBytes { get; set; }
+    public long DurationMs { get; set; }
+    public string OutputPreview { get; set; } = string.Empty;
+    public string IdempotencyKey { get; set; } = string.Empty;
+}
+
 public sealed class ReleaseLeaseResponse
 {
     public ReleaseClassification Classification { get; set; }
     public string Recommendation { get; set; } = string.Empty;
     public string IdempotencyKey { get; set; } = string.Empty;
+    public LeaseReceipt? Receipt { get; set; }
+    public string PolicyVersion { get; set; } = string.Empty;
+    public string PolicyHash { get; set; } = string.Empty;
+}
+
+public sealed class LeaseReceipt
+{
+    public string LeaseId { get; set; } = string.Empty;
+    public string PolicyHash { get; set; } = string.Empty;
+    public int ActualPromptTokens { get; set; }
+    public int ActualOutputTokens { get; set; }
+    public int ActualCostCents { get; set; }
+    public LeaseOutcome Outcome { get; set; }
+    public string AuditEntryHash { get; set; } = string.Empty;
+    public DateTimeOffset TimestampUtc { get; set; }
 }
 
 public sealed class ApprovalRequest
@@ -142,4 +210,63 @@ public sealed class MetricsSnapshot
     public double ComputePoolUtilization { get; set; }
     public Dictionary<string, long> GrantsByReason { get; set; } = new();
     public Dictionary<string, long> DeniesByReason { get; set; } = new();
+}
+
+public sealed class GovernorStatusResponse
+{
+    public DateTimeOffset TimestampUtc { get; set; }
+    public DateTimeOffset StartedAtUtc { get; set; }
+    public bool Healthy { get; set; }
+    public bool DurableStateEnabled { get; set; }
+    public string StateDatabasePath { get; set; } = string.Empty;
+    public int ActiveLeases { get; set; }
+    public int PendingApprovals { get; set; }
+    public int SpendTodayCents { get; set; }
+    public string PolicyVersion { get; set; } = string.Empty;
+    public string PolicyHash { get; set; } = string.Empty;
+}
+
+public sealed class ExportDiagnosticsRequest
+{
+    public string OutputPath { get; set; } = string.Empty;
+    public string IdempotencyKey { get; set; } = string.Empty;
+}
+
+public sealed class ExportDiagnosticsResponse
+{
+    public bool Exported { get; set; }
+    public string OutputPath { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+    public string IdempotencyKey { get; set; } = string.Empty;
+}
+
+public sealed class PolicyBundle
+{
+    public string Version { get; set; } = string.Empty;
+    public DateTimeOffset CreatedAtUtc { get; set; }
+    public string Author { get; set; } = string.Empty;
+    public string PolicyContentJson { get; set; } = string.Empty;
+    public string SignatureBase64 { get; set; } = string.Empty;
+}
+
+public sealed class StagePolicyBundleResponse
+{
+    public bool Accepted { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public string StagedPolicyHash { get; set; } = string.Empty;
+    public string StagedPolicyVersion { get; set; } = string.Empty;
+}
+
+public sealed class ActivatePolicyRequest
+{
+    public string Version { get; set; } = string.Empty;
+    public string IdempotencyKey { get; set; } = string.Empty;
+}
+
+public sealed class ActivatePolicyResponse
+{
+    public bool Activated { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public string ActivePolicyHash { get; set; } = string.Empty;
+    public string ActivePolicyVersion { get; set; } = string.Empty;
 }

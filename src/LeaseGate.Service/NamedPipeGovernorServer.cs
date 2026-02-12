@@ -132,6 +132,71 @@ public sealed class NamedPipeGovernorServer : IDisposable
                     };
                     break;
                 }
+                case "GetStatus":
+                {
+                    var status = _governor.GetStatus();
+                    response = new PipeCommandResponse
+                    {
+                        Success = true,
+                        PayloadJson = ProtocolJson.Serialize(status)
+                    };
+                    break;
+                }
+                case "ExportDiagnostics":
+                {
+                    var payload = ProtocolJson.Deserialize<ExportDiagnosticsRequest>(request.PayloadJson);
+                    var result = _governor.ExportDiagnostics(payload);
+                    response = new PipeCommandResponse
+                    {
+                        Success = true,
+                        PayloadJson = ProtocolJson.Serialize(result)
+                    };
+                    break;
+                }
+                case "StagePolicyBundle":
+                {
+                    var payload = ProtocolJson.Deserialize<PolicyBundle>(request.PayloadJson);
+                    var result = _governor.StagePolicyBundle(payload);
+                    response = new PipeCommandResponse
+                    {
+                        Success = true,
+                        PayloadJson = ProtocolJson.Serialize(result)
+                    };
+                    break;
+                }
+                case "ActivatePolicy":
+                {
+                    var payload = ProtocolJson.Deserialize<ActivatePolicyRequest>(request.PayloadJson);
+                    var result = await _governor.ActivatePolicyAsync(payload, cancellationToken);
+                    response = new PipeCommandResponse
+                    {
+                        Success = true,
+                        PayloadJson = ProtocolJson.Serialize(result)
+                    };
+                    break;
+                }
+                case "RequestToolSubLease":
+                {
+                    var payload = ProtocolJson.Deserialize<ToolSubLeaseRequest>(request.PayloadJson);
+                    var result = _governor.RequestToolSubLease(payload);
+                    response = new PipeCommandResponse
+                    {
+                        Success = true,
+                        PayloadJson = ProtocolJson.Serialize(result)
+                    };
+                    break;
+                }
+                case "ExecuteToolCall":
+                {
+                    var payload = ProtocolJson.Deserialize<ToolExecutionRequest>(request.PayloadJson);
+                    var result = await _governor.ExecuteToolCallAsync(payload, cancellationToken);
+                    response = new PipeCommandResponse
+                    {
+                        Success = true,
+                        PayloadJson = ProtocolJson.Serialize(result)
+                    };
+                    break;
+                }
                 default:
                     response = new PipeCommandResponse
                     {
