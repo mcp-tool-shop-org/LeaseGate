@@ -30,6 +30,7 @@
     <ProjectReference Include="..\..\src\LeaseGate.Storage\LeaseGate.Storage.csproj" />
     <ProjectReference Include="..\..\src\LeaseGate.Hub\LeaseGate.Hub.csproj" />
     <ProjectReference Include="..\..\src\LeaseGate.Agent\LeaseGate.Agent.csproj" />
+    <ProjectReference Include="..\..\src\LeaseGate.Receipt\LeaseGate.Receipt.csproj" />
   </ItemGroup>
 
 </Project>

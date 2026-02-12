@@ -4,6 +4,7 @@ using LeaseGate.Hub;
 using LeaseGate.Policy;
 using LeaseGate.Protocol;
 using LeaseGate.Providers;
+using LeaseGate.Receipt;
 using LeaseGate.Service;
 using LeaseGate.Service.Tools;
 
@@ -77,8 +78,14 @@ switch (command)
 	case "daily-report":
 		await PrintDailyReportAsync(policyPath);
 		break;
+	case "export-proof":
+		await ExportProofAsync(auditDir, args);
+		break;
+	case "verify-receipt":
+		await VerifyReceiptAsync(auditDir, args);
+		break;
 	default:
-		Console.WriteLine("Commands: simulate-concurrency | simulate-adapter | simulate-approval | simulate-high-cost | simulate-stress | simulate-all | daily-report");
+		Console.WriteLine("Commands: simulate-concurrency | simulate-adapter | simulate-approval | simulate-high-cost | simulate-stress | simulate-all | daily-report | export-proof | verify-receipt");
 		break;
 }
 
@@ -423,4 +430,70 @@ static async Task PrintDailyReportAsync(string policyPath)
 	}
 
 	Console.WriteLine(hub.PrintDailyReport());
+}
+
+static async Task ExportProofAsync(string auditDir, string[] cliArgs)
+{
+	var service = new GovernanceReceiptService();
+	var auditFile = GetLatestAuditFile(auditDir);
+	if (string.IsNullOrWhiteSpace(auditFile))
+	{
+		Console.WriteLine("no audit file found");
+		return;
+	}
+
+	var from = 1;
+	var to = File.ReadAllLines(auditFile).Length;
+	var fromArg = cliArgs.FirstOrDefault(a => a.StartsWith("--from", StringComparison.OrdinalIgnoreCase));
+	if (!string.IsNullOrWhiteSpace(fromArg))
+	{
+		var range = fromArg.Split('=', 2).LastOrDefault() ?? string.Empty;
+		var parts = range.Split('-', 2, StringSplitOptions.RemoveEmptyEntries);
+		if (parts.Length == 2 && int.TryParse(parts[0], out var parsedFrom) && int.TryParse(parts[1], out var parsedTo))
+		{
+			from = parsedFrom;
+			to = parsedTo;
+		}
+	}
+
+	var bundle = service.ExportProof(auditFile, from, to, "policy-bundle-hash-local", "local-signature-info");
+	var output = Path.Combine(auditDir, $"governance-receipt-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}.json");
+	service.SaveBundle(bundle, output);
+
+	Console.WriteLine($"proof exported: {output}");
+	await Task.CompletedTask;
+}
+
+static async Task VerifyReceiptAsync(string auditDir, string[] cliArgs)
+{
+	var service = new GovernanceReceiptService();
+	var receiptPath = cliArgs.Length > 1 ? cliArgs[1] : string.Empty;
+	if (string.IsNullOrWhiteSpace(receiptPath) || !File.Exists(receiptPath))
+	{
+		Console.WriteLine("usage: verify-receipt <file>");
+		return;
+	}
+
+	var auditFile = GetLatestAuditFile(auditDir);
+	if (string.IsNullOrWhiteSpace(auditFile))
+	{
+		Console.WriteLine("no audit file found");
+		return;
+	}
+
+	var result = service.VerifyReceipt(receiptPath, auditFile);
+	Console.WriteLine(result.Valid ? "receipt valid" : $"receipt invalid: {result.Message}");
+	await Task.CompletedTask;
+}
+
+static string GetLatestAuditFile(string auditDir)
+{
+	if (!Directory.Exists(auditDir))
+	{
+		return string.Empty;
+	}
+
+	return Directory.GetFiles(auditDir, "*.jsonl")
+		.OrderByDescending(File.GetLastWriteTimeUtc)
+		.FirstOrDefault() ?? string.Empty;
 }
