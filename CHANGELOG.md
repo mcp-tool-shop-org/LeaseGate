@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.0 - 2026-02-12
+
+Phase 3 production-hardening release.
+
+### Added
+
+- Durable governor state via SQLite (`leases`, approvals, rate events, budget, policy metadata) with restart recovery
+- Restart-expiry handling for stale leases with explicit `lease_expired_by_restart` auditing
+- Tamper-evident audit hash chaining (`prevHash`, `entryHash`) and release receipts bound to audit hash + policy hash
+- Policy bundle stage/activate controls with signature verification path and active policy metadata propagation
+- Tool sub-leases and isolation boundaries (scoped calls, timeout/output ceilings, category/path/host checks)
+- Runtime ops endpoints:
+	- `GetStatus` snapshot for health + policy/runtime state
+	- `ExportDiagnostics` bundle for status/metrics/pool configuration snapshots
+- Expanded Phase 3 test coverage for durability recovery, clock-skew recovery, chaos burst loops, and diagnostics export
+
 ## 0.2.0 - 2026-02-12
 
 Phase 2 real AI governance release.
