@@ -198,7 +198,8 @@ public class Phase2Tests
                 MaxRetrievedChunks = 8,
                 MaxToolOutputTokens = 400,
                 MaxToolCallsPerLease = maxToolCalls,
-                MaxComputeUnits = 5
+                MaxComputeUnits = 5,
+                EnableDurableState = false
             },
             policy,
             audit,
@@ -235,9 +236,9 @@ public class Phase2Tests
 
     private sealed class NoopAuditWriter : IAuditWriter
     {
-        public Task WriteAsync(AuditEvent auditEvent, CancellationToken cancellationToken)
+        public Task<AuditWriteResult> WriteAsync(AuditEvent auditEvent, CancellationToken cancellationToken)
         {
-            return Task.CompletedTask;
+            return Task.FromResult(new AuditWriteResult());
         }
     }
 }

@@ -170,4 +170,38 @@ public sealed class ApprovalStore
             return true;
         }
     }
+
+    public List<ApprovalRecord> Snapshot()
+    {
+        lock (_lock)
+        {
+            return _records.Values.Select(record => new ApprovalRecord
+            {
+                ApprovalId = record.ApprovalId,
+                Request = record.Request,
+                Status = record.Status,
+                ExpiresAtUtc = record.ExpiresAtUtc,
+                Token = record.Token,
+                Used = record.Used
+            }).ToList();
+        }
+    }
+
+    public void Restore(IEnumerable<ApprovalRecord> approvals)
+    {
+        lock (_lock)
+        {
+            _records.Clear();
+            _byToken.Clear();
+
+            foreach (var approval in approvals)
+            {
+                _records[approval.ApprovalId] = approval;
+                if (!string.IsNullOrWhiteSpace(approval.Token))
+                {
+                    _byToken[approval.Token] = approval;
+                }
+            }
+        }
+    }
 }

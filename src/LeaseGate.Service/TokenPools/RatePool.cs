@@ -49,6 +49,30 @@ public sealed class RatePool
         }
     }
 
+    public List<(DateTimeOffset TimestampUtc, int TokenCost)> SnapshotEvents()
+    {
+        lock (_lock)
+        {
+            Prune(DateTimeOffset.UtcNow);
+            return _events.ToList();
+        }
+    }
+
+    public void RestoreEvents(IEnumerable<(DateTimeOffset TimestampUtc, int TokenCost)> events)
+    {
+        lock (_lock)
+        {
+            _events.Clear();
+            foreach (var evt in events.OrderBy(e => e.TimestampUtc))
+            {
+                if (DateTimeOffset.UtcNow - evt.TimestampUtc < _window)
+                {
+                    _events.Enqueue((evt.TimestampUtc, Math.Max(0, evt.TokenCost)));
+                }
+            }
+        }
+    }
+
     private int EstimateRetryAfterMs()
     {
         if (_events.Count == 0)

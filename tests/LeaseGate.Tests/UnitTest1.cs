@@ -163,7 +163,8 @@ public class UnitTest1
             {
                 MaxInFlight = maxInFlight,
                 DailyBudgetCents = budget,
-                LeaseTtl = TimeSpan.FromMilliseconds(ttlMs)
+                LeaseTtl = TimeSpan.FromMilliseconds(ttlMs),
+                EnableDurableState = false
             },
             policy,
             audit);
@@ -171,9 +172,9 @@ public class UnitTest1
 
     private sealed class NoopAuditWriter : IAuditWriter
     {
-        public Task WriteAsync(AuditEvent auditEvent, CancellationToken cancellationToken)
+        public Task<AuditWriteResult> WriteAsync(AuditEvent auditEvent, CancellationToken cancellationToken)
         {
-            return Task.CompletedTask;
+            return Task.FromResult(new AuditWriteResult());
         }
     }
 }

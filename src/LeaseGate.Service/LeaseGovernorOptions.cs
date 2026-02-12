@@ -14,4 +14,7 @@ public sealed class LeaseGovernorOptions
     public int MaxToolCallsPerLease { get; set; } = 6;
     public int MaxComputeUnits { get; set; } = 8;
     public TimeSpan RateWindow { get; set; } = TimeSpan.FromMinutes(1);
+    public bool EnableDurableState { get; set; } = true;
+    public string StateDatabasePath { get; set; } = Path.Combine(AppContext.BaseDirectory, "leasegate-state", "leasegate.db");
+    public int ReceiptThresholdCostCents { get; set; } = 20;
 }

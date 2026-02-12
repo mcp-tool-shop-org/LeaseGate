@@ -75,6 +75,28 @@ public sealed class DailyBudgetPool
         }
     }
 
+    public DateTime CurrentDateUtc
+    {
+        get
+        {
+            lock (_lock)
+            {
+                RollDateIfNeeded();
+                return _currentDateUtc;
+            }
+        }
+    }
+
+    public void RestoreState(DateTime dateUtc, int reservedCents)
+    {
+        lock (_lock)
+        {
+            _currentDateUtc = dateUtc.Date;
+            _reservedCents = Math.Max(0, reservedCents);
+            RollDateIfNeeded();
+        }
+    }
+
     private void RollDateIfNeeded()
     {
         var nowDate = DateTime.UtcNow.Date;

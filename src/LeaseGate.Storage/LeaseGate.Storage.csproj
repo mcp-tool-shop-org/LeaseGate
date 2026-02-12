@@ -1,10 +1,11 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
     <ProjectReference Include="..\LeaseGate.Protocol\LeaseGate.Protocol.csproj" />
-    <ProjectReference Include="..\LeaseGate.Policy\LeaseGate.Policy.csproj" />
-    <ProjectReference Include="..\LeaseGate.Audit\LeaseGate.Audit.csproj" />
-    <ProjectReference Include="..\LeaseGate.Storage\LeaseGate.Storage.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.10" />
   </ItemGroup>
 
   <PropertyGroup>

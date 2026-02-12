@@ -15,6 +15,14 @@ public sealed class LeaseStore
         }
     }
 
+    public List<LeaseRecord> GetAll()
+    {
+        lock (_lock)
+        {
+            return _byLeaseId.Values.ToList();
+        }
+    }
+
     public LeaseRecord? GetByIdempotency(string idempotencyKey)
     {
         lock (_lock)
@@ -24,6 +32,15 @@ public sealed class LeaseStore
                 return null;
             }
 
+            _byLeaseId.TryGetValue(leaseId, out var lease);
+            return lease;
+        }
+    }
+
+    public LeaseRecord? GetByLeaseId(string leaseId)
+    {
+        lock (_lock)
+        {
             _byLeaseId.TryGetValue(leaseId, out var lease);
             return lease;
         }

@@ -5,7 +5,10 @@ using LeaseGate.Service.Approvals;
 using LeaseGate.Service.Leases;
 using LeaseGate.Service.Telemetry;
 using LeaseGate.Service.TokenPools;
+using LeaseGate.Service.ToolIsolation;
 using LeaseGate.Service.Tools;
+using LeaseGate.Storage;
+using System.Text;
 
 namespace LeaseGate.Service;
 
@@ -20,10 +23,14 @@ public sealed class LeaseGovernor : IDisposable
     private readonly ContextPool _context;
     private readonly ComputePool _compute;
     private readonly ToolRegistry _toolRegistry;
+    private readonly ToolSubLeaseStore _toolSubLeases;
+    private readonly IsolatedToolRunner _toolRunner;
     private readonly ApprovalStore _approvals;
     private readonly MetricsRegistry _metrics;
     private readonly LeaseStore _leases = new();
     private readonly Timer _expiryTimer;
+    private readonly ILeaseGateStateStore? _stateStore;
+    private readonly DateTimeOffset _startedAtUtc = DateTimeOffset.UtcNow;
     private double _lastContextUtilization;
 
     public LeaseGovernor(LeaseGovernorOptions options, IPolicyEngine policy, IAuditWriter audit, ToolRegistry? toolRegistry = null)
@@ -37,24 +44,34 @@ public sealed class LeaseGovernor : IDisposable
         _context = new ContextPool(options.MaxContextTokens, options.MaxRetrievedChunks, options.MaxToolOutputTokens);
         _compute = new ComputePool(options.MaxComputeUnits);
         _toolRegistry = toolRegistry ?? new ToolRegistry();
+        _toolSubLeases = new ToolSubLeaseStore();
+        _toolRunner = new IsolatedToolRunner();
         _approvals = new ApprovalStore();
         _metrics = new MetricsRegistry();
+        _stateStore = options.EnableDurableState ? new SqliteLeaseGateStateStore(options.StateDatabasePath) : null;
+        RecoverDurableState();
         _expiryTimer = new Timer(_ => _ = ExpireLeasesAsync(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
     }
 
     public ApprovalRequestResponse RequestApproval(ApprovalRequest request)
     {
-        return _approvals.Create(request);
+        var response = _approvals.Create(request);
+        PersistApprovals();
+        return response;
     }
 
     public GrantApprovalResponse GrantApproval(GrantApprovalRequest request)
     {
-        return _approvals.Grant(request);
+        var response = _approvals.Grant(request);
+        PersistApprovals();
+        return response;
     }
 
     public DenyApprovalResponse DenyApproval(DenyApprovalRequest request)
     {
-        return _approvals.Deny(request);
+        var response = _approvals.Deny(request);
+        PersistApprovals();
+        return response;
     }
 
     public MetricsSnapshot GetMetricsSnapshot()
@@ -71,8 +88,217 @@ public sealed class LeaseGovernor : IDisposable
         };
     }
 
+    public GovernorStatusResponse GetStatus()
+    {
+        var approvals = _approvals.Snapshot();
+        var pendingApprovals = approvals.Count(a => a.Status == ApprovalDecisionStatus.Pending && a.ExpiresAtUtc > DateTimeOffset.UtcNow);
+
+        return new GovernorStatusResponse
+        {
+            TimestampUtc = DateTimeOffset.UtcNow,
+            StartedAtUtc = _startedAtUtc,
+            Healthy = true,
+            DurableStateEnabled = _options.EnableDurableState,
+            StateDatabasePath = _options.StateDatabasePath,
+            ActiveLeases = _concurrency.Active,
+            PendingApprovals = pendingApprovals,
+            SpendTodayCents = _budget.ReservedCents,
+            PolicyVersion = _policy.CurrentSnapshot.Policy.PolicyVersion,
+            PolicyHash = _policy.CurrentSnapshot.PolicyHash
+        };
+    }
+
+    public ExportDiagnosticsResponse ExportDiagnostics(ExportDiagnosticsRequest request)
+    {
+        try
+        {
+            var outputPath = string.IsNullOrWhiteSpace(request.OutputPath)
+                ? Path.Combine(Path.GetTempPath(), $"leasegate-diagnostics-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}.json")
+                : request.OutputPath;
+
+            var directory = Path.GetDirectoryName(outputPath);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            var payload = new
+            {
+                Status = GetStatus(),
+                Metrics = GetMetricsSnapshot(),
+                Pools = new
+                {
+                    Concurrency = new { Active = _concurrency.Active, Capacity = _options.MaxInFlight },
+                    Compute = new { Utilization = _compute.Utilization, Capacity = _options.MaxComputeUnits },
+                    Rate = new
+                    {
+                        Utilization = _rate.Utilization,
+                        MaxRequestsPerMinute = _options.MaxRequestsPerMinute,
+                        MaxTokensPerMinute = _options.MaxTokensPerMinute,
+                        WindowSeconds = _options.RateWindow.TotalSeconds
+                    },
+                    Context = new
+                    {
+                        Utilization = _lastContextUtilization,
+                        MaxContextTokens = _options.MaxContextTokens,
+                        MaxRetrievedChunks = _options.MaxRetrievedChunks,
+                        MaxToolOutputTokens = _options.MaxToolOutputTokens
+                    },
+                    Budget = new { ReservedCents = _budget.ReservedCents, LimitCents = _options.DailyBudgetCents }
+                }
+            };
+
+            File.WriteAllText(outputPath, ProtocolJson.Serialize(payload), Encoding.UTF8);
+
+            return new ExportDiagnosticsResponse
+            {
+                Exported = true,
+                OutputPath = outputPath,
+                Message = "diagnostics exported",
+                IdempotencyKey = request.IdempotencyKey
+            };
+        }
+        catch (Exception ex)
+        {
+            return new ExportDiagnosticsResponse
+            {
+                Exported = false,
+                OutputPath = request.OutputPath,
+                Message = ex.Message,
+                IdempotencyKey = request.IdempotencyKey
+            };
+        }
+    }
+
+    public StagePolicyBundleResponse StagePolicyBundle(PolicyBundle bundle)
+    {
+        return _policy.StageBundle(bundle);
+    }
+
+    public ToolSubLeaseResponse RequestToolSubLease(ToolSubLeaseRequest request)
+    {
+        var lease = _leases.GetByLeaseId(request.LeaseId);
+        if (lease is null)
+        {
+            return new ToolSubLeaseResponse
+            {
+                Granted = false,
+                DeniedReason = "lease_not_found",
+                Recommendation = "acquire a valid model lease first",
+                IdempotencyKey = request.IdempotencyKey
+            };
+        }
+
+        var allowedCalls = Math.Min(Math.Max(1, request.RequestedCalls), lease.Constraints.MaxToolCalls ?? _options.MaxToolCallsPerLease);
+        var timeoutMs = Math.Min(Math.Max(100, request.TimeoutMs), _policy.CurrentSnapshot.Policy.DefaultToolTimeoutMs);
+        var maxBytes = Math.Min(Math.Max(256, request.MaxOutputBytes), _policy.CurrentSnapshot.Policy.MaxToolOutputBytes);
+
+        var subLease = _toolSubLeases.Add(
+            request.LeaseId,
+            request.ToolId,
+            request.Category,
+            allowedCalls,
+            timeoutMs,
+            maxBytes,
+            lease.ExpiresAtUtc);
+
+        return new ToolSubLeaseResponse
+        {
+            Granted = true,
+            ToolSubLeaseId = subLease.ToolSubLeaseId,
+            ExpiresAtUtc = subLease.ExpiresAtUtc,
+            AllowedCalls = subLease.RemainingCalls,
+            TimeoutMs = subLease.TimeoutMs,
+            MaxOutputBytes = subLease.MaxOutputBytes,
+            Recommendation = "sub-lease granted",
+            IdempotencyKey = request.IdempotencyKey
+        };
+    }
+
+    public async Task<ToolExecutionResponse> ExecuteToolCallAsync(ToolExecutionRequest request, CancellationToken cancellationToken)
+    {
+        if (!_toolSubLeases.TryConsume(request.ToolSubLeaseId, request.LeaseId, request.ToolId, request.Category, out var subLease, out var denyReason) || subLease is null)
+        {
+            var denied = new ToolExecutionResponse
+            {
+                Allowed = false,
+                Outcome = LeaseOutcome.PolicyDenied,
+                DeniedReason = denyReason,
+                Recommendation = "request a valid scoped tool sub-lease",
+                IdempotencyKey = request.IdempotencyKey
+            };
+
+            await _audit.WriteAsync(new AuditEvent
+            {
+                EventType = "tool_execution_denied",
+                TimestampUtc = DateTimeOffset.UtcNow,
+                ProtocolVersion = ProtocolVersionInfo.ProtocolVersion,
+                PolicyHash = _policy.CurrentSnapshot.PolicyHash,
+                LeaseId = request.LeaseId,
+                ActorId = "tool",
+                WorkspaceId = "tool",
+                ActionType = ActionType.ToolCall.ToString(),
+                ModelId = string.Empty,
+                RequestedTools = new List<string> { $"{request.ToolId}:{request.Category}" },
+                Decision = "denied",
+                Reason = denied.DeniedReason,
+                Recommendation = denied.Recommendation
+            }, cancellationToken);
+
+            return denied;
+        }
+
+        var result = await _toolRunner.ExecuteAsync(request, subLease, _policy.CurrentSnapshot.Policy, cancellationToken);
+        await _audit.WriteAsync(new AuditEvent
+        {
+            EventType = result.Allowed ? "tool_execution_completed" : "tool_execution_blocked",
+            TimestampUtc = DateTimeOffset.UtcNow,
+            ProtocolVersion = ProtocolVersionInfo.ProtocolVersion,
+            PolicyHash = _policy.CurrentSnapshot.PolicyHash,
+            LeaseId = request.LeaseId,
+            ActorId = "tool",
+            WorkspaceId = "tool",
+            ActionType = ActionType.ToolCall.ToString(),
+            ModelId = string.Empty,
+            RequestedTools = new List<string> { $"{request.ToolId}:{request.Category}" },
+            ToolUsageSummary = new List<string> { $"bytes={result.OutputBytes};ms={result.DurationMs}" },
+            Decision = result.Outcome.ToString(),
+            Reason = result.DeniedReason,
+            Recommendation = result.Recommendation
+        }, cancellationToken);
+
+        return result;
+    }
+
+    public async Task<ActivatePolicyResponse> ActivatePolicyAsync(ActivatePolicyRequest request, CancellationToken cancellationToken)
+    {
+        var activation = _policy.ActivateStaged(request);
+        if (activation.Activated)
+        {
+            PersistPolicyState();
+            await _audit.WriteAsync(new AuditEvent
+            {
+                EventType = "policy_activated",
+                TimestampUtc = DateTimeOffset.UtcNow,
+                ProtocolVersion = ProtocolVersionInfo.ProtocolVersion,
+                PolicyHash = activation.ActivePolicyHash,
+                LeaseId = string.Empty,
+                ActorId = "system",
+                WorkspaceId = "system",
+                ActionType = ActionType.WorkflowStep.ToString(),
+                ModelId = string.Empty,
+                Decision = "activated",
+                Recommendation = activation.ActivePolicyVersion
+            }, cancellationToken);
+        }
+
+        return activation;
+    }
+
     public async Task<AcquireLeaseResponse> AcquireAsync(AcquireLeaseRequest request, CancellationToken cancellationToken)
     {
+        await ExpireLeasesAsync();
+
         var existing = _leases.GetByIdempotency(request.IdempotencyKey);
         if (existing is not null)
         {
@@ -82,7 +308,9 @@ public sealed class LeaseGovernor : IDisposable
                 LeaseId = existing.LeaseId,
                 ExpiresAtUtc = existing.ExpiresAtUtc,
                 Constraints = existing.Constraints,
-                IdempotencyKey = request.IdempotencyKey
+                IdempotencyKey = request.IdempotencyKey,
+                PolicyVersion = _policy.CurrentSnapshot.Policy.PolicyVersion,
+                PolicyHash = _policy.CurrentSnapshot.PolicyHash
             };
         }
 
@@ -177,6 +405,9 @@ public sealed class LeaseGovernor : IDisposable
             ExpiresAtUtc = DateTimeOffset.UtcNow.Add(_options.LeaseTtl)
         };
         _leases.Add(lease);
+        PersistLease(lease);
+        PersistBudgetAndRate();
+        PersistPolicyState();
 
         var response = new AcquireLeaseResponse
         {
@@ -184,7 +415,9 @@ public sealed class LeaseGovernor : IDisposable
             LeaseId = lease.LeaseId,
             ExpiresAtUtc = lease.ExpiresAtUtc,
             Constraints = constraints,
-            IdempotencyKey = request.IdempotencyKey
+            IdempotencyKey = request.IdempotencyKey,
+            PolicyVersion = _policy.CurrentSnapshot.Policy.PolicyVersion,
+            PolicyHash = _policy.CurrentSnapshot.PolicyHash
         };
 
         await _audit.WriteAsync(new AuditEvent
@@ -224,10 +457,13 @@ public sealed class LeaseGovernor : IDisposable
         _concurrency.Release();
         _compute.Release(lease.ReservedComputeUnits);
         _budget.Settle(lease.Request.EstimatedCostCents, request.ActualCostCents);
+        _toolSubLeases.RemoveByLease(request.LeaseId);
+        _stateStore?.RemoveLease(request.LeaseId);
+        PersistBudgetAndRate();
 
         var recommendation = BuildReleaseRecommendation(request);
 
-        await _audit.WriteAsync(new AuditEvent
+        var auditResult = await _audit.WriteAsync(new AuditEvent
         {
             EventType = "lease_released",
             TimestampUtc = DateTimeOffset.UtcNow,
@@ -250,7 +486,22 @@ public sealed class LeaseGovernor : IDisposable
         {
             Classification = ReleaseClassification.Recorded,
             Recommendation = recommendation,
-            IdempotencyKey = request.IdempotencyKey
+            IdempotencyKey = request.IdempotencyKey,
+            PolicyVersion = _policy.CurrentSnapshot.Policy.PolicyVersion,
+            PolicyHash = _policy.CurrentSnapshot.PolicyHash,
+            Receipt = request.ActualCostCents >= _options.ReceiptThresholdCostCents
+                ? new LeaseReceipt
+                {
+                    LeaseId = lease.LeaseId,
+                    PolicyHash = _policy.CurrentSnapshot.PolicyHash,
+                    ActualPromptTokens = request.ActualPromptTokens,
+                    ActualOutputTokens = request.ActualOutputTokens,
+                    ActualCostCents = request.ActualCostCents,
+                    Outcome = request.Outcome,
+                    AuditEntryHash = auditResult.EntryHash,
+                    TimestampUtc = DateTimeOffset.UtcNow
+                }
+                : null
         };
     }
 
@@ -311,7 +562,7 @@ public sealed class LeaseGovernor : IDisposable
         };
     }
 
-    private static AcquireLeaseResponse Denied(
+    private AcquireLeaseResponse Denied(
         AcquireLeaseRequest request,
         string reason,
         int? retryAfterMs,
@@ -326,7 +577,9 @@ public sealed class LeaseGovernor : IDisposable
             DeniedReason = reason,
             RetryAfterMs = retryAfterMs,
             Recommendation = recommendation,
-            IdempotencyKey = request.IdempotencyKey
+            IdempotencyKey = request.IdempotencyKey,
+            PolicyVersion = _policy.CurrentSnapshot.Policy.PolicyVersion,
+            PolicyHash = _policy.CurrentSnapshot.PolicyHash
         };
     }
 
@@ -364,6 +617,9 @@ public sealed class LeaseGovernor : IDisposable
             _concurrency.Release();
             _compute.Release(lease.ReservedComputeUnits);
             _budget.ReleaseReservation(lease.Request.EstimatedCostCents);
+            _toolSubLeases.RemoveByLease(lease.LeaseId);
+            _stateStore?.RemoveLease(lease.LeaseId);
+            PersistBudgetAndRate();
 
             await _audit.WriteAsync(new AuditEvent
             {
@@ -381,6 +637,159 @@ public sealed class LeaseGovernor : IDisposable
                 Decision = "expired"
             }, CancellationToken.None);
         }
+    }
+
+    private void RecoverDurableState()
+    {
+        if (_stateStore is null)
+        {
+            return;
+        }
+
+        var snapshot = _stateStore.Load();
+
+        if (snapshot.BudgetState is not null)
+        {
+            _budget.RestoreState(snapshot.BudgetState.DateUtc, snapshot.BudgetState.ReservedCents);
+        }
+
+        if (snapshot.RateEvents.Count > 0)
+        {
+            _rate.RestoreEvents(snapshot.RateEvents.Select(e => (e.TimestampUtc, e.TokenCost)));
+        }
+
+        var restoredApprovals = snapshot.Approvals.Select(a => new ApprovalRecord
+        {
+            ApprovalId = a.ApprovalId,
+            Status = Enum.TryParse<ApprovalDecisionStatus>(a.Status, true, out var parsedStatus)
+                ? parsedStatus
+                : ApprovalDecisionStatus.Pending,
+            ExpiresAtUtc = a.ExpiresAtUtc,
+            Token = a.Token,
+            Used = a.Used,
+            Request = ProtocolJson.Deserialize<ApprovalRequest>(a.RequestJson)
+        }).ToList();
+        _approvals.Restore(restoredApprovals);
+
+        var now = DateTimeOffset.UtcNow;
+        foreach (var persistedLease in snapshot.ActiveLeases)
+        {
+            var request = ProtocolJson.Deserialize<AcquireLeaseRequest>(persistedLease.RequestJson);
+            var constraints = ProtocolJson.Deserialize<LeaseConstraints>(persistedLease.ConstraintsJson);
+
+            if (persistedLease.ExpiresAtUtc <= now)
+            {
+                _ = _audit.WriteAsync(new AuditEvent
+                {
+                    EventType = "lease_expired_by_restart",
+                    TimestampUtc = now,
+                    ProtocolVersion = ProtocolVersionInfo.ProtocolVersion,
+                    PolicyHash = _policy.CurrentSnapshot.PolicyHash,
+                    LeaseId = persistedLease.LeaseId,
+                    ActorId = request.ActorId,
+                    WorkspaceId = request.WorkspaceId,
+                    ActionType = request.ActionType.ToString(),
+                    ModelId = request.ModelId,
+                    EstimatedCostCents = request.EstimatedCostCents,
+                    Decision = "expired"
+                }, CancellationToken.None);
+                _stateStore.RemoveLease(persistedLease.LeaseId);
+                continue;
+            }
+
+            _concurrency.TryAcquire(out _);
+            _compute.TryAcquire(persistedLease.ReservedComputeUnits, out _);
+            _budget.TryReserve(request.EstimatedCostCents, out _);
+
+            _leases.Add(new LeaseRecord
+            {
+                LeaseId = persistedLease.LeaseId,
+                IdempotencyKey = persistedLease.IdempotencyKey,
+                Request = request,
+                Constraints = constraints,
+                ReservedComputeUnits = persistedLease.ReservedComputeUnits,
+                AcquiredAtUtc = persistedLease.AcquiredAtUtc,
+                ExpiresAtUtc = persistedLease.ExpiresAtUtc
+            });
+        }
+
+        PersistBudgetAndRate();
+        PersistApprovals();
+        PersistPolicyState();
+    }
+
+    private void PersistLease(LeaseRecord lease)
+    {
+        if (_stateStore is null)
+        {
+            return;
+        }
+
+        _stateStore.UpsertLease(new StoredLease
+        {
+            LeaseId = lease.LeaseId,
+            IdempotencyKey = lease.IdempotencyKey,
+            AcquiredAtUtc = lease.AcquiredAtUtc,
+            ExpiresAtUtc = lease.ExpiresAtUtc,
+            ReservedComputeUnits = lease.ReservedComputeUnits,
+            RequestJson = ProtocolJson.Serialize(lease.Request),
+            ConstraintsJson = ProtocolJson.Serialize(lease.Constraints)
+        });
+    }
+
+    private void PersistApprovals()
+    {
+        if (_stateStore is null)
+        {
+            return;
+        }
+
+        var approvals = _approvals.Snapshot().Select(a => new StoredApproval
+        {
+            ApprovalId = a.ApprovalId,
+            Status = a.Status.ToString(),
+            ExpiresAtUtc = a.ExpiresAtUtc,
+            Token = a.Token,
+            Used = a.Used,
+            RequestJson = ProtocolJson.Serialize(a.Request)
+        }).ToList();
+
+        _stateStore.ReplaceApprovals(approvals);
+    }
+
+    private void PersistBudgetAndRate()
+    {
+        if (_stateStore is null)
+        {
+            return;
+        }
+
+        _stateStore.SaveBudgetState(new StoredBudgetState
+        {
+            DateUtc = _budget.CurrentDateUtc,
+            ReservedCents = _budget.ReservedCents
+        });
+
+        var events = _rate.SnapshotEvents().Select(e => new StoredRateEvent
+        {
+            TimestampUtc = e.TimestampUtc,
+            TokenCost = e.TokenCost
+        }).ToList();
+        _stateStore.ReplaceRateEvents(events);
+    }
+
+    private void PersistPolicyState()
+    {
+        if (_stateStore is null)
+        {
+            return;
+        }
+
+        _stateStore.SavePolicyState(new StoredPolicyState
+        {
+            PolicyVersion = _policy.CurrentSnapshot.Policy.PolicyVersion,
+            PolicyHash = _policy.CurrentSnapshot.PolicyHash
+        });
     }
 
     public void Dispose()
