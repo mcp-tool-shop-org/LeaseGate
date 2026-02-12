@@ -4,6 +4,10 @@
 
 Phase 2 real AI governance release.
 
+### Release Notes
+
+LeaseGate now governs real AI execution paths with explicit controls across throughput, context, compute, tool access, and risky-action approvals. This release is focused on operational predictability: deterministic deny reasons, scoped approval tokens, and a telemetry snapshot that aligns with audit events.
+
 ### Added
 
 - Multi-pool resource controls:
@@ -17,6 +21,35 @@ Phase 2 real AI governance release.
 - Metrics snapshot API and in-memory counters by reason
 - Stress harness command (`simulate-stress`) with summary report
 - Additional unit tests for pools, approvals, constraints, and metrics
+
+### Integration Migration Checklist
+
+- Update `AcquireLeaseRequest` population to include context/compute/tool fields:
+	- `requestedContextTokens`
+	- `requestedRetrievedChunks`
+	- `estimatedToolOutputTokens`
+	- `estimatedComputeUnits`
+	- `requestedTools`
+- Read and apply lease constraints from `AcquireLeaseResponse.constraints`:
+	- `maxOutputTokensOverride`
+	- `maxToolCalls`
+	- `maxContextTokens`
+	- `cooldownMs`
+- Update release reporting to include provider/tool telemetry:
+	- `latencyMs`
+	- `providerErrorClassification`
+	- `toolCalls[]`
+- Handle approval-required flow in client code:
+	- catch `ApprovalRequiredException`
+	- call `RequestApprovalAsync(...)`
+	- call `GrantApprovalAsync(...)` (or `DenyApprovalAsync(...)`)
+	- retry acquire with returned `approvalToken`
+- Adopt provider adapter path where possible:
+	- implement `IModelProvider`
+	- use `GovernedModelCall.ExecuteProviderCallAsync(...)`
+- Add operational checks around telemetry and stress behavior:
+	- call `GetMetrics` snapshot periodically
+	- verify deny distributions and active-lease return-to-zero under load
 
 ## 0.1.0 - 2026-02-12
 
