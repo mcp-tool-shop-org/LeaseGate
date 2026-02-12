@@ -11,6 +11,9 @@ public sealed class LeaseGatePolicy
     public int MaxTokensPerMinute { get; set; } = 250_000;
     public int MaxContextTokens { get; set; } = 16_000;
     public int MaxRetrievedChunks { get; set; } = 40;
+    public int MaxRetrievedBytes { get; set; } = 1_000_000;
+    public int MaxRetrievedTokens { get; set; } = 12_000;
+    public int SummarizationTargetTokens { get; set; } = 1_000;
     public int MaxToolOutputTokens { get; set; } = 4_000;
     public int MaxToolCallsPerLease { get; set; } = 6;
     public int MaxComputeUnits { get; set; } = 8;

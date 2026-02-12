@@ -20,11 +20,14 @@ public sealed class AcquireLeaseRequest
     public int EstimatedCostCents { get; set; }
     public int RequestedContextTokens { get; set; }
     public int RequestedRetrievedChunks { get; set; }
+    public int RequestedRetrievedBytes { get; set; }
+    public int RequestedRetrievedTokens { get; set; }
     public int EstimatedToolOutputTokens { get; set; }
     public int EstimatedComputeUnits { get; set; } = 1;
     public List<string> RequestedCapabilities { get; set; } = new();
     public List<ToolIntent> RequestedTools { get; set; } = new();
     public List<string> RiskFlags { get; set; } = new();
+    public List<ContextContribution> ContextContributions { get; set; } = new();
     public string ApprovalToken { get; set; } = string.Empty;
     public string IdempotencyKey { get; set; } = string.Empty;
 }
@@ -69,6 +72,14 @@ public sealed class ToolIntent
 {
     public string ToolId { get; set; } = string.Empty;
     public ToolCategory Category { get; set; }
+}
+
+public sealed class ContextContribution
+{
+    public string SourceId { get; set; } = string.Empty;
+    public int Chunks { get; set; }
+    public int Bytes { get; set; }
+    public int Tokens { get; set; }
 }
 
 public sealed class ReleaseLeaseRequest
@@ -169,6 +180,15 @@ public sealed class LeaseReceipt
     public string AuditEntryHash { get; set; } = string.Empty;
     public DateTimeOffset TimestampUtc { get; set; }
     public List<ApprovalDecisionTrace> ApprovalChain { get; set; } = new();
+    public List<ContextSummaryTrace> ContextSummaries { get; set; } = new();
+}
+
+public sealed class ContextSummaryTrace
+{
+    public string SourceId { get; set; } = string.Empty;
+    public int OriginalTokens { get; set; }
+    public int SummarizedTokens { get; set; }
+    public string PolicyRule { get; set; } = string.Empty;
 }
 
 public sealed class ApprovalDecisionTrace

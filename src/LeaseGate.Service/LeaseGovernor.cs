@@ -480,12 +480,42 @@ public sealed class LeaseGovernor : IDisposable
                 var constrained = BuildConstraints(request);
                 constrained.MaxOutputTokensOverride = Math.Max(32, request.MaxOutputTokens / 2);
                 constrained.CooldownMs = 250;
+                var summaries = BuildContextSummaries(request);
 
-                var autoLease = CreateLease(request, constrained);
+                if (!_budget.TryReserve(1, out _))
+                {
+                    _compute.Release(request.EstimatedComputeUnits);
+                    _concurrency.Release();
+                    var summaryDenied = Denied(request, "summarization_budget_unavailable", 500, "insufficient budget to run governed summarization");
+                    summaryDenied.FallbackPlan = BuildFallbackPlan(request, summaryDenied.DeniedReason, summaryDenied.RetryAfterMs);
+                    await AuditDeniedAsync(request, summaryDenied, cancellationToken);
+                    _metrics.RecordDeny("summarization_budget_unavailable");
+                    return summaryDenied;
+                }
+
+                var autoLease = CreateLease(request, constrained, contextSummaries: summaries);
                 _leases.Add(autoLease);
                 PersistLease(autoLease);
                 PersistBudgetAndRate();
                 PersistPolicyState();
+
+                await _audit.WriteAsync(new AuditEvent
+                {
+                    EventType = "context_summarization_required",
+                    TimestampUtc = DateTimeOffset.UtcNow,
+                    ProtocolVersion = ProtocolVersionInfo.ProtocolVersion,
+                    PolicyHash = _policy.CurrentSnapshot.PolicyHash,
+                    LeaseId = autoLease.LeaseId,
+                    OrgId = request.OrgId,
+                    ActorId = request.ActorId,
+                    WorkspaceId = request.WorkspaceId,
+                    PrincipalType = request.PrincipalType,
+                    Role = request.Role,
+                    ActionType = request.ActionType.ToString(),
+                    ModelId = request.ModelId,
+                    Decision = "auto_summarized",
+                    Recommendation = string.Join(";", summaries.Select(s => $"{s.SourceId}:{s.OriginalTokens}->{s.SummarizedTokens}"))
+                }, cancellationToken);
 
                 return GrantedWithPlan(request, autoLease, "context_auto_compression_applied", BuildFallbackPlan(request, "context_prompt_tokens_exceeded", 250));
             }
@@ -499,6 +529,62 @@ public sealed class LeaseGovernor : IDisposable
             return denied;
         }
         _lastContextUtilization = _context.Utilization(request);
+
+        if (!ValidateRetrievalBudgets(request, out var retrievalReason, out var retrievalRecommendation))
+        {
+            if (request.AutoApplyConstraints)
+            {
+                var constrained = BuildConstraints(request);
+                constrained.CooldownMs = 250;
+                constrained.MaxContextTokens = Math.Min(_options.MaxContextTokens, _policy.CurrentSnapshot.Policy.SummarizationTargetTokens);
+                var summaries = BuildContextSummaries(request);
+
+                if (!_budget.TryReserve(1, out _))
+                {
+                    _compute.Release(request.EstimatedComputeUnits);
+                    _concurrency.Release();
+                    var summaryDenied = Denied(request, "summarization_budget_unavailable", 500, "insufficient budget to run governed summarization");
+                    summaryDenied.FallbackPlan = BuildFallbackPlan(request, summaryDenied.DeniedReason, summaryDenied.RetryAfterMs);
+                    await AuditDeniedAsync(request, summaryDenied, cancellationToken);
+                    _metrics.RecordDeny("summarization_budget_unavailable");
+                    return summaryDenied;
+                }
+
+                var autoLease = CreateLease(request, constrained, contextSummaries: summaries);
+                _leases.Add(autoLease);
+                PersistLease(autoLease);
+                PersistBudgetAndRate();
+                PersistPolicyState();
+
+                await _audit.WriteAsync(new AuditEvent
+                {
+                    EventType = "context_summarization_required",
+                    TimestampUtc = DateTimeOffset.UtcNow,
+                    ProtocolVersion = ProtocolVersionInfo.ProtocolVersion,
+                    PolicyHash = _policy.CurrentSnapshot.PolicyHash,
+                    LeaseId = autoLease.LeaseId,
+                    OrgId = request.OrgId,
+                    ActorId = request.ActorId,
+                    WorkspaceId = request.WorkspaceId,
+                    PrincipalType = request.PrincipalType,
+                    Role = request.Role,
+                    ActionType = request.ActionType.ToString(),
+                    ModelId = request.ModelId,
+                    Decision = "auto_summarized",
+                    Recommendation = string.Join(";", summaries.Select(s => $"{s.SourceId}:{s.OriginalTokens}->{s.SummarizedTokens}"))
+                }, cancellationToken);
+
+                return GrantedWithPlan(request, autoLease, "retrieval_auto_compression_applied", BuildFallbackPlan(request, retrievalReason, 250));
+            }
+
+            _compute.Release(request.EstimatedComputeUnits);
+            _concurrency.Release();
+            var denied = Denied(request, retrievalReason, 250, retrievalRecommendation);
+            denied.FallbackPlan = BuildFallbackPlan(request, denied.DeniedReason, denied.RetryAfterMs);
+            await AuditDeniedAsync(request, denied, cancellationToken);
+            _metrics.RecordDeny(retrievalReason);
+            return denied;
+        }
 
         if (!_budget.TryReserve(request.EstimatedCostCents, out var budgetRetryMs))
         {
@@ -579,7 +665,11 @@ public sealed class LeaseGovernor : IDisposable
         return response;
     }
 
-    private LeaseRecord CreateLease(AcquireLeaseRequest request, LeaseConstraints constraints, ApprovalRecord? approvalRecord = null)
+    private LeaseRecord CreateLease(
+        AcquireLeaseRequest request,
+        LeaseConstraints constraints,
+        ApprovalRecord? approvalRecord = null,
+        List<ContextSummaryTrace>? contextSummaries = null)
     {
         return new LeaseRecord
         {
@@ -595,6 +685,7 @@ public sealed class LeaseGovernor : IDisposable
                 Comment = r.Comment,
                 Scope = r.Scope
             }).ToList() ?? new List<ApprovalDecisionTrace>(),
+            ContextSummaries = contextSummaries ?? new List<ContextSummaryTrace>(),
             ReservedComputeUnits = Math.Max(1, request.EstimatedComputeUnits),
             AcquiredAtUtc = DateTimeOffset.UtcNow,
             ExpiresAtUtc = DateTimeOffset.UtcNow.Add(_options.LeaseTtl)
@@ -653,6 +744,51 @@ public sealed class LeaseGovernor : IDisposable
                 Detail = retryAfterMs.HasValue ? $"retry after {retryAfterMs.Value}ms" : $"retry for {denyReason} with exponential backoff"
             }
         };
+    }
+
+    private bool ValidateRetrievalBudgets(AcquireLeaseRequest request, out string reason, out string recommendation)
+    {
+        var policy = _policy.CurrentSnapshot.Policy;
+
+        if (request.RequestedRetrievedChunks > policy.MaxRetrievedChunks)
+        {
+            reason = "retrieval_chunks_exceeded";
+            recommendation = "reduce retrieval chunks or allow governed summarization";
+            return false;
+        }
+
+        if (request.RequestedRetrievedBytes > policy.MaxRetrievedBytes)
+        {
+            reason = "retrieval_bytes_exceeded";
+            recommendation = "reduce retrieval bytes or allow governed summarization";
+            return false;
+        }
+
+        if (request.RequestedRetrievedTokens > policy.MaxRetrievedTokens)
+        {
+            reason = "retrieval_tokens_exceeded";
+            recommendation = "reduce retrieval tokens or allow governed summarization";
+            return false;
+        }
+
+        reason = string.Empty;
+        recommendation = string.Empty;
+        return true;
+    }
+
+    private List<ContextSummaryTrace> BuildContextSummaries(AcquireLeaseRequest request)
+    {
+        var targetTokens = Math.Max(64, _policy.CurrentSnapshot.Policy.SummarizationTargetTokens);
+        return request.ContextContributions
+            .Where(c => c.Tokens > targetTokens)
+            .Select(c => new ContextSummaryTrace
+            {
+                SourceId = c.SourceId,
+                OriginalTokens = c.Tokens,
+                SummarizedTokens = targetTokens,
+                PolicyRule = "summarization_target_tokens"
+            })
+            .ToList();
     }
 
     public async Task<ReleaseLeaseResponse> ReleaseAsync(ReleaseLeaseRequest request, CancellationToken cancellationToken)
@@ -724,6 +860,13 @@ public sealed class LeaseGovernor : IDisposable
                         ReviewedAtUtc = r.ReviewedAtUtc,
                         Comment = r.Comment,
                         Scope = r.Scope
+                    }).ToList(),
+                    ContextSummaries = lease.ContextSummaries.Select(s => new ContextSummaryTrace
+                    {
+                        SourceId = s.SourceId,
+                        OriginalTokens = s.OriginalTokens,
+                        SummarizedTokens = s.SummarizedTokens,
+                        PolicyRule = s.PolicyRule
                     }).ToList()
                 }
                 : null
