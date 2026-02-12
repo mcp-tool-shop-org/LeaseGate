@@ -1,0 +1,15 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\LeaseGate.Protocol\LeaseGate.Protocol.csproj" />
+    <ProjectReference Include="..\LeaseGate.Policy\LeaseGate.Policy.csproj" />
+    <ProjectReference Include="..\LeaseGate.Audit\LeaseGate.Audit.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

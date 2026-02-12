@@ -1,0 +1,24 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\LeaseGate.Client\LeaseGate.Client.csproj" />
+    <ProjectReference Include="..\..\src\LeaseGate.Protocol\LeaseGate.Protocol.csproj" />
+    <ProjectReference Include="..\..\src\LeaseGate.Service\LeaseGate.Service.csproj" />
+    <ProjectReference Include="..\..\src\LeaseGate.Policy\LeaseGate.Policy.csproj" />
+    <ProjectReference Include="..\..\src\LeaseGate.Audit\LeaseGate.Audit.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Update="policy.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>
