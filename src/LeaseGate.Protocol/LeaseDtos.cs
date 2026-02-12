@@ -10,8 +10,14 @@ public sealed class AcquireLeaseRequest
     public int EstimatedPromptTokens { get; set; }
     public int MaxOutputTokens { get; set; }
     public int EstimatedCostCents { get; set; }
+    public int RequestedContextTokens { get; set; }
+    public int RequestedRetrievedChunks { get; set; }
+    public int EstimatedToolOutputTokens { get; set; }
+    public int EstimatedComputeUnits { get; set; } = 1;
     public List<string> RequestedCapabilities { get; set; } = new();
+    public List<ToolIntent> RequestedTools { get; set; } = new();
     public List<string> RiskFlags { get; set; } = new();
+    public string ApprovalToken { get; set; } = string.Empty;
     public string IdempotencyKey { get; set; } = string.Empty;
 }
 
@@ -31,6 +37,15 @@ public sealed class LeaseConstraints
 {
     public int? MaxOutputTokensOverride { get; set; }
     public string ForcedModelId { get; set; } = string.Empty;
+    public int? MaxToolCalls { get; set; }
+    public int? MaxContextTokens { get; set; }
+    public int? CooldownMs { get; set; }
+}
+
+public sealed class ToolIntent
+{
+    public string ToolId { get; set; } = string.Empty;
+    public ToolCategory Category { get; set; }
 }
 
 public sealed class ReleaseLeaseRequest
@@ -42,8 +57,21 @@ public sealed class ReleaseLeaseRequest
     public int ToolCallsCount { get; set; }
     public long BytesIn { get; set; }
     public long BytesOut { get; set; }
+    public long LatencyMs { get; set; }
+    public ProviderErrorClassification ProviderErrorClassification { get; set; }
+    public List<ToolCallUsage> ToolCalls { get; set; } = new();
     public LeaseOutcome Outcome { get; set; }
     public string IdempotencyKey { get; set; } = string.Empty;
+}
+
+public sealed class ToolCallUsage
+{
+    public string ToolId { get; set; } = string.Empty;
+    public ToolCategory Category { get; set; }
+    public long DurationMs { get; set; }
+    public long BytesIn { get; set; }
+    public long BytesOut { get; set; }
+    public LeaseOutcome Outcome { get; set; } = LeaseOutcome.Success;
 }
 
 public sealed class ReleaseLeaseResponse
@@ -51,4 +79,67 @@ public sealed class ReleaseLeaseResponse
     public ReleaseClassification Classification { get; set; }
     public string Recommendation { get; set; } = string.Empty;
     public string IdempotencyKey { get; set; } = string.Empty;
+}
+
+public sealed class ApprovalRequest
+{
+    public string ActorId { get; set; } = string.Empty;
+    public string WorkspaceId { get; set; } = string.Empty;
+    public string Reason { get; set; } = string.Empty;
+    public string RequestedBy { get; set; } = string.Empty;
+    public string ToolId { get; set; } = string.Empty;
+    public ToolCategory? ToolCategory { get; set; }
+    public int TtlSeconds { get; set; } = 300;
+    public bool SingleUse { get; set; } = true;
+    public string IdempotencyKey { get; set; } = string.Empty;
+}
+
+public sealed class ApprovalRequestResponse
+{
+    public string ApprovalId { get; set; } = string.Empty;
+    public ApprovalDecisionStatus Status { get; set; }
+    public DateTimeOffset ExpiresAtUtc { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public string IdempotencyKey { get; set; } = string.Empty;
+}
+
+public sealed class GrantApprovalRequest
+{
+    public string ApprovalId { get; set; } = string.Empty;
+    public string GrantedBy { get; set; } = string.Empty;
+    public string IdempotencyKey { get; set; } = string.Empty;
+}
+
+public sealed class GrantApprovalResponse
+{
+    public bool Granted { get; set; }
+    public string ApprovalToken { get; set; } = string.Empty;
+    public DateTimeOffset ExpiresAtUtc { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public string IdempotencyKey { get; set; } = string.Empty;
+}
+
+public sealed class DenyApprovalRequest
+{
+    public string ApprovalId { get; set; } = string.Empty;
+    public string DeniedBy { get; set; } = string.Empty;
+    public string IdempotencyKey { get; set; } = string.Empty;
+}
+
+public sealed class DenyApprovalResponse
+{
+    public bool Denied { get; set; }
+    public string Message { get; set; } = string.Empty;
+    public string IdempotencyKey { get; set; } = string.Empty;
+}
+
+public sealed class MetricsSnapshot
+{
+    public int ActiveLeases { get; set; }
+    public int SpendTodayCents { get; set; }
+    public double RatePoolUtilization { get; set; }
+    public double ContextPoolUtilization { get; set; }
+    public double ComputePoolUtilization { get; set; }
+    public Dictionary<string, long> GrantsByReason { get; set; } = new();
+    public Dictionary<string, long> DeniesByReason { get; set; } = new();
 }

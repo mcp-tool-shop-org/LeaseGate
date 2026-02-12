@@ -24,3 +24,32 @@ public enum ReleaseClassification
     LeaseNotFound,
     LeaseExpired
 }
+
+public enum ToolCategory
+{
+    FileRead,
+    FileWrite,
+    NetworkRead,
+    NetworkWrite,
+    Exec,
+    Other
+}
+
+public enum ProviderErrorClassification
+{
+    None,
+    RateLimited,
+    Timeout,
+    ContextTooLarge,
+    ModelUnavailable,
+    Unauthorized,
+    Unknown
+}
+
+public enum ApprovalDecisionStatus
+{
+    Pending,
+    Granted,
+    Denied,
+    Expired
+}
