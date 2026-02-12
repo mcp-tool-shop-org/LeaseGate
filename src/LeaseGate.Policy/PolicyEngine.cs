@@ -54,6 +54,7 @@ public sealed class PolicyEngine : IPolicyEngine, IDisposable
     public PolicyDecision Evaluate(AcquireLeaseRequest request)
     {
         var policy = CurrentSnapshot.Policy;
+        var key = $"{request.ActorId}|{request.WorkspaceId}";
 
         if (policy.AllowedModels.Count > 0 && !policy.AllowedModels.Contains(request.ModelId, StringComparer.OrdinalIgnoreCase))
         {
@@ -76,6 +77,27 @@ public sealed class PolicyEngine : IPolicyEngine, IDisposable
         if (!string.IsNullOrWhiteSpace(risky))
         {
             return PolicyDecision.Deny("risk_requires_approval", "request approval for risky operation");
+        }
+
+        var deniedCategories = policy.DeniedToolCategories.ToImmutableHashSet();
+        var blockedByCategory = request.RequestedTools.FirstOrDefault(t => deniedCategories.Contains(t.Category));
+        if (blockedByCategory is not null)
+        {
+            return PolicyDecision.Deny(
+                $"tool_category_denied:{blockedByCategory.Category}",
+                $"remove restricted tool category {blockedByCategory.Category}");
+        }
+
+        if (policy.AllowedToolsByActorWorkspace.TryGetValue(key, out var allowedTools) && allowedTools.Count > 0)
+        {
+            var allowlist = allowedTools.ToImmutableHashSet(StringComparer.OrdinalIgnoreCase);
+            var blockedTool = request.RequestedTools.FirstOrDefault(t => !allowlist.Contains(t.ToolId));
+            if (blockedTool is not null)
+            {
+                return PolicyDecision.Deny(
+                    $"tool_not_allowed:{blockedTool.ToolId}",
+                    "request an allowed tool for this actor/workspace");
+            }
         }
 
         return PolicyDecision.Allow();

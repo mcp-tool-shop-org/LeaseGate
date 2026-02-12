@@ -1,9 +1,17 @@
 {
   "maxInFlight": 4,
   "dailyBudgetCents": 120,
+  "maxRequestsPerMinute": 90,
+  "maxTokensPerMinute": 10000,
+  "maxContextTokens": 2000,
+  "maxRetrievedChunks": 8,
+  "maxToolOutputTokens": 300,
+  "maxToolCallsPerLease": 4,
+  "maxComputeUnits": 4,
   "allowedModels": [
     "gpt-4o-mini",
-    "gpt-4.1-mini"
+    "gpt-4.1-mini",
+    "rate-limit-model"
   ],
   "allowedCapabilities": {
     "chatCompletion": [
@@ -13,13 +21,30 @@
       "embed"
     ],
     "toolCall": [
-      "read"
+      "read",
+      "chat"
     ],
     "workflowStep": [
       "read",
       "chat"
     ]
   },
+  "allowedToolsByActorWorkspace": {
+    "demo|sample": [
+      "fs.read",
+      "net.fetch",
+      "net.post",
+      "shell.exec"
+    ],
+    "stress|sample": []
+  },
+  "deniedToolCategories": [
+    "exec"
+  ],
+  "approvalRequiredToolCategories": [
+    "networkWrite",
+    "fileWrite"
+  ],
   "riskRequiresApproval": [
     "network_write",
     "file_write",

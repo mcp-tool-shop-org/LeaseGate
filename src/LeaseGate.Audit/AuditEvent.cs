@@ -13,6 +13,8 @@ public sealed class AuditEvent
     public string ModelId { get; set; } = string.Empty;
     public int EstimatedCostCents { get; set; }
     public int ActualCostCents { get; set; }
+    public List<string> RequestedTools { get; set; } = new();
+    public List<string> ToolUsageSummary { get; set; } = new();
     public string Decision { get; set; } = string.Empty;
     public string Reason { get; set; } = string.Empty;
     public string Recommendation { get; set; } = string.Empty;
