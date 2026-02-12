@@ -1,84 +1,108 @@
 # Policy Guide
 
-## Policy File
+## Policy Sources
 
-Policy is JSON in Phase 1. Sample:
+LeaseGate supports policy composition from GitOps YAML under `policies/`:
 
-- `samples/LeaseGate.SampleCli/policy.json`
+- `org.yml`: shared defaults and global constraints
+- `models.yml`: model allowlists and workspace model overrides
+- `tools.yml`: denied/approval-required categories and reviewer requirements
+- `workspaces/*.yml`: workspace budgets, rate caps, and role capability maps
 
-Example schema:
+The composed policy maps to `LeaseGatePolicy` and is loaded by `PolicyGitOpsLoader`.
 
-```json
-{
-  "maxInFlight": 4,
-  "dailyBudgetCents": 120,
-  "maxRequestsPerMinute": 90,
-  "maxTokensPerMinute": 10000,
-  "maxContextTokens": 2000,
-  "maxRetrievedChunks": 8,
-  "maxToolOutputTokens": 300,
-  "maxToolCallsPerLease": 4,
-  "maxComputeUnits": 4,
-  "allowedModels": ["gpt-4o-mini"],
-  "allowedCapabilities": {
-    "chatCompletion": ["chat"],
-    "toolCall": ["read"]
-  },
-  "allowedToolsByActorWorkspace": {
-    "demo|sample": ["fs.read", "net.fetch"]
-  },
-  "deniedToolCategories": ["exec"],
-  "approvalRequiredToolCategories": ["networkWrite", "fileWrite"],
-  "riskRequiresApproval": ["network_write", "file_write", "exec"]
-}
-```
+## Core control domains
 
-## Rules
+### Capacity and budgets
 
-### Capacity and budget
+- `maxInFlight`, `maxInFlightPerActor`
+- `dailyBudgetCents`, `orgDailyBudgetCents`, `workspaceDailyBudgetCents`, `actorDailyBudgetCents`
+- `maxRequestsPerMinute`, `maxTokensPerMinute`
+- org/workspace/actor rate overrides
 
-- `maxInFlight`: hard cap for concurrent active leases
-- `dailyBudgetCents`: UTC daily spend limit
+### Context governance
 
-### Model allowlist
+- `maxContextTokens`
+- `maxRetrievedChunks`, `maxRetrievedBytes`, `maxRetrievedTokens`
+- `summarizationTargetTokens`
 
-If `allowedModels` is non-empty, model ID must be included.
+### Tool and compute governance
 
-### Capability allowlist
+- `maxToolCallsPerLease`
+- `maxToolOutputTokens`, `maxToolOutputBytes`
+- `maxComputeUnits`
+- `defaultToolTimeoutMs`
+- `allowedFileRoots`, `allowedNetworkHosts`
 
-Capabilities are constrained by `actionType`.
+### Model, capability, and intent controls
 
-If an action has an allowlist entry, every requested capability must match it.
+- `allowedModels`
+- `allowedModelsByWorkspace`
+- `allowedCapabilities`
+- `allowedCapabilitiesByRole`
+- `intentModelTiers`
+- `intentMaxCostCents`
 
-### Tool allowlist
+### Identity and approvals
 
-Tools can be constrained per `actorId|workspaceId` using `allowedToolsByActorWorkspace`.
+- `serviceAccounts[]` with scoped token/org/workspace/role/capability/model/tool controls
+- `deniedToolCategories`
+- `approvalRequiredToolCategories`
+- `approvalReviewersByToolCategory`
+- `riskRequiresApproval`
 
-### Tool category deny list
+### Safety automation
 
-`deniedToolCategories` hard-denies specific categories, even if tool IDs are otherwise allowed.
+- `retryThresholdPerLease`
+- `toolLoopThreshold`
+- `policyDenyCircuitBreakerThreshold`
+- `safetyCooldownMs`
+- `clampedMaxOutputTokens`
+- `spendSpikeCents`
 
-### Approval-required categories
+## Evaluation behavior
 
-`approvalRequiredToolCategories` enforces human grant flow.
+At acquire time, policy checks are applied before final pool admission.
 
-Requests in those categories must include a valid scoped approval token.
+Typical deny classes include:
 
-### Risk gate
+- disallowed model/capability
+- tool category blocked
+- tool/risk requires approval
+- service account constraint mismatch
+- intent/cost threshold mismatch
 
-If request `riskFlags` intersects `riskRequiresApproval`, request is denied in Phase 1 with approval recommendation.
+Responses include explicit `deniedReason` and actionable `recommendation`.
 
-## Hot Reload
+## Signed policy bundles
 
-`PolicyEngine` supports optional file-watch reloading.
+Policy bundles can be staged and activated through protocol commands:
 
-- Invalid updates are ignored (last good snapshot remains active)
-- `policyHash` changes when policy content changes
+- `StagePolicyBundle`
+- `ActivatePolicy`
 
-## Operational Tips
+`PolicyEngineOptions` supports signature enforcement:
 
-- Start with strict, minimal capability sets
-- Keep model allowlist narrow in production
-- Track policy changes through source control
-- Pair policy updates with audit review windows
-- Use narrow approval scopes (actor + workspace + tool/category + short TTL + single-use)
+- `requireSignedBundles`
+- `allowedPublicKeysBase64`
+
+When enabled, only bundles with valid signatures and allowed keys activate.
+
+## Linting and CI
+
+`PolicyGitOpsLoader.Lint(...)` validates key safety conditions, including:
+
+- positive budgets/rate limits/in-flight limits
+- required model allowlist presence
+- deny-by-default category expectations
+- reviewer count validity per tool category
+
+Run lint/sign checks in CI via `.github/workflows/policy-ci.yml`.
+
+## Operational guidance
+
+- Keep role capability sets minimal and explicit.
+- Reserve high-cost intents for constrained model tiers.
+- Require multiple reviewers for high-risk categories.
+- Pair policy changes with report/audit review windows.
+- Prefer signed bundle activation in production.

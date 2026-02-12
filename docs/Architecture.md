@@ -2,106 +2,121 @@
 
 ## Purpose
 
-LeaseGate provides a local control plane for AI/model/tool execution:
+LeaseGate provides a governance control plane for AI/model/tool execution where every unit of work is lease-gated, policy-constrained, and auditable.
 
-- Requests are admitted through explicit lease acquisition
-- Resources are constrained by policy and token pools
-- Every decision is auditable
-- Deadlocks are avoided via TTL-based lease expiry
+Core guarantees:
 
-## High-Level Flow
+- Explicit lease admission before model or tool execution
+- Deterministic deny reasons and operator recommendations
+- Bounded execution via pooled resource controls
+- Durable state and restart-safe recovery
+- Tamper-evident audit and verifiable governance receipts
+
+## Runtime Topology
+
+LeaseGate supports both local-only and distributed operation.
+
+### Local mode
 
 ```text
-Client SDK
-  -> Named Pipe Request (Acquire)
-  -> Governor
-      -> PolicyEngine (allow/deny)
-      -> ConcurrencyPool (max in-flight)
-      -> RatePool (requests/tokens rolling window)
-      -> ContextPool (prompt/chunks/tool-output budgets)
-      -> ComputePool (weighted slots)
-      -> ToolRegistry (tool + category validation)
-      -> ApprovalStore (scoped human approval tokens)
-      -> DailyBudgetPool (daily cents)
-      -> LeaseStore (active + idempotency + TTL)
-      -> MetricsRegistry (grant/deny/utilization counters)
-      -> AuditWriter (event log)
+Client SDK -> Named Pipe Server -> LeaseGovernor
+```
+
+### Distributed mode
+
+```text
+Client SDK -> LeaseGateAgent -> HubControlPlane
+                        \-> local LeaseGovernor (degraded mode fallback)
+```
+
+In distributed mode, the Hub provides shared accounting and quota authority. If Hub access degrades, the Agent can continue with constrained local enforcement and marks responses as degraded.
+
+## Acquire / Release Flow
+
+```text
+Acquire
+  Client -> AcquireLeaseRequest
+  Governor pipeline:
+    1) identity + RBAC/service-account checks
+    2) policy evaluation (models, capabilities, risk, tools)
+    3) intent routing + fallback plan generation
+    4) pool checks (concurrency, rate, context, compute, spend)
+    5) approvals + reviewer requirements
+    6) safety automation checks (cooldown/clamp/circuit-breaker)
+    7) lease persistence + audit event
   <- AcquireLeaseResponse
 
-Client executes provider/tool work
-
-Client SDK
-  -> Named Pipe Request (Release)
-  -> Governor
-      -> release tokens + settle budget
-      -> classify provider/tool failure outcomes
-      -> audit release
+Release
+  Client -> ReleaseLeaseRequest
+  Governor pipeline:
+    1) settle spend + utilization + tool outcomes
+    2) update attribution and alerts
+    3) append hash-chained audit entry
+    4) mint release receipt bound to policy/audit hash
   <- ReleaseLeaseResponse
 ```
 
-## Components
+## Component Map
 
 ### LeaseGate.Protocol
 
-- Wire-level DTOs and enums
-- Version marker: `0.1`
-- Stable serializer settings via `ProtocolJson`
-- Length-prefixed message framing for pipe transport
+- Shared wire DTOs and enums (protocol v0.1)
+- Length-prefixed framed messages for named pipe transport
+- Stable JSON serialization via `ProtocolJson`
 
 ### LeaseGate.Service
 
-- `LeaseGovernor`: orchestration core
-- `ConcurrencyPool`: in-flight control
-- `RatePool`: requests/tokens rolling-window control
-- `ContextPool`: context/tool-output boundary control
-- `ComputePool`: weighted compute slot control
-- `DailyBudgetPool`: UTC day rollover budget tracking
-- `LeaseStore`: active lease and idempotency tracking
-- `ToolRegistry`: canonical tool definitions and categories
-- `ApprovalStore`: approval request + scoped token lifecycle
-- `MetricsRegistry`: operational counters and utilization views
-- `NamedPipeGovernorServer`: local daemon transport
-
-### LeaseGate.Providers
-
-- `IModelProvider`: normalized provider contract
-- `ModelCallSpec` + `ModelCallResult`: governed execution inputs/outputs
-- `DeterministicFakeProviderAdapter`: deterministic adapter for local/demo/test
-- `ProviderFailureClassifier`: stable error -> outcome mapping
+- `LeaseGovernor`: core orchestration
+- Resource pools: concurrency, rate, context, compute, daily spend
+- Approval queue/review workflows
+- Tool sub-leases and guarded tool execution
+- Safety state machine and runaway suppression hooks
+- Diagnostics and report export surfaces
+- `NamedPipeGovernorServer`: command transport
 
 ### LeaseGate.Policy
 
-- Human-editable policy model
-- Evaluate acquire requests for model/capability/risk constraints
-- Optional file-watch hot reload
-- Immutable snapshots with SHA-256 `policyHash`
+- Policy model with org/workspace/role constraints
+- GitOps YAML composition (`org.yml`, `models.yml`, `tools.yml`, `workspaces/*.yml`)
+- Signed bundle stage/activate path
+- Policy linting and immutable hash/version propagation
+
+### LeaseGate.Storage
+
+- Durable SQLite stores for leases, approvals, rate events, budget, policy metadata
+- Restart recovery and stale lease cleanup
 
 ### LeaseGate.Audit
 
-- Best-effort append-only JSONL writer
-- Never crashes governor on logging failure
-- Daily file naming for practical rotation
+- Append-only JSONL audit writer
+- Hash-chain (`prevHash`, `entryHash`) for tamper evidence
+- Best-effort writes that do not crash governor paths
 
-### LeaseGate.Client
+### LeaseGate.Hub
 
-- Acquire/release SDK calls
-- Approval helper calls and metrics snapshot call
-- Service-unavailable fallback behavior:
-  - Dev mode: bounded local allowance
-  - Prod mode: deny risky/non-read-only actions
-- `GovernedModelCall` wrapper for delegates and provider adapters
-- `ApprovalRequiredException` for explicit human-in-the-loop escalation
+- Cross-agent distributed quota accounting
+- Cost attribution aggregation and reporting support
 
-## Non-Goals (Current)
+### LeaseGate.Agent
 
-- Distributed/multi-host daemon mode
-- centralized policy service / remote orchestration
-- cryptographic approval attestation (beyond scoped local token)
+- Hub-forwarding edge component for clients
+- Degraded local behavior when hub is unavailable
 
-## Future Evolution
+### LeaseGate.Receipt
 
-- Provider adapters
-- explicit approvals
-- richer recommendation engine
-- additional resource pools
-- centralized fleet policy orchestration
+- Governance proof bundle generation
+- Signature and anchor verification against audit chain
+
+### LeaseGate.Client / LeaseGate.Providers
+
+- SDK command surface for all governor operations
+- Provider abstraction and governed execution wrapper
+- Deterministic fake provider for tests and demos
+
+## Key Data Artifacts
+
+- Audit log: append-only JSONL with chain hashes
+- SQLite durable state: active/pending governance state
+- Policy bundles: signed payloads with version/hash metadata
+- Daily reports: spend, deny distributions, alerts
+- Governance proof bundles: receipts + verification material

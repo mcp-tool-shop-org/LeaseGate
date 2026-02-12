@@ -1,201 +1,103 @@
 # LeaseGate
 
-Local AI-governance control plane for acquiring and releasing execution leases with policy enforcement and audit logging.
+LeaseGate is a local-first AI governance control plane that issues execution leases, enforces policy and budgets, and produces tamper-evident governance evidence.
 
-## Phase 2 Status
+## Current Status
 
-LeaseGate Phase 2 is implemented and runnable:
+Phases 1-5 are implemented and tested, including:
 
-- Deterministic protocol (`Acquire`/`Release`)
-- Local governor daemon (named pipes)
-- Multi-pool governance (concurrency, rate, context, compute, daily budget)
-- Human-editable policy allowlists and risk gates
-- Tool registry and structured tool usage governance
-- Approval workflow for risky actions (`RequestApproval` / `GrantApproval` / `DenyApproval`)
-- Provider adapter abstraction with deterministic fake adapter
-- Telemetry snapshot API and stress harness
-- Append-only JSONL audit trail
-- Client SDK with governed call wrapper
-- Sample CLI scenario runner
-- Unit tests for pools, approvals, constraints, and fallback modes
+- Lease admission and TTL-based release safety
+- Multi-pool governance (concurrency, rate, context, compute, spend)
+- Durable SQLite state with restart recovery
+- Hash-chained audit entries and release receipts
+- Signed policy bundle stage/activate flow
+- Tool isolation with governed sub-leases
+- Hub/Agent distributed mode with degraded local behavior
+- RBAC, service accounts, hierarchical quotas, fairness controls
+- Approval queue with reviewer trails
+- Intent routing with deterministic fallback plans
+- Context governance with governed summarization traces
+- Safety automation (cooldown, clamp, circuit-breaker)
+- Governance proof export and verification
 
 ## Solution Layout
 
 ```text
 LeaseGate.sln
 src/
-  LeaseGate.Protocol/   # DTOs, enums, serializer + framing
-  LeaseGate.Service/    # governor, pools, lease store, named-pipe server
-  LeaseGate.Client/     # SDK + governed model call wrapper
-  LeaseGate.Providers/  # provider interface + adapter implementations
-  LeaseGate.Policy/     # policy model, loader, evaluator, hot reload
-  LeaseGate.Audit/      # resilient append-only JSONL writer
+  LeaseGate.Protocol/     # DTOs, enums, serializer + framing
+  LeaseGate.Policy/       # policy model, evaluator, GitOps loader
+  LeaseGate.Audit/        # append-only hash-chained audit writer
+  LeaseGate.Service/      # governor, pools, approvals, safety, tool isolation
+  LeaseGate.Client/       # SDK commands + governed call wrapper
+  LeaseGate.Providers/    # provider interface + adapters
+  LeaseGate.Storage/      # durable SQLite-backed state
+  LeaseGate.Hub/          # distributed quota and attribution control plane
+  LeaseGate.Agent/        # hub-aware agent with local degraded fallback
+  LeaseGate.Receipt/      # proof export + verification services
 samples/
-  LeaseGate.SampleCli/  # end-to-end demo scenarios
+  LeaseGate.SampleCli/    # end-to-end scenarios and proof/report commands
+  LeaseGate.AuditVerifier/# audit chain verification sample
 tests/
-  LeaseGate.Tests/      # unit tests
+  LeaseGate.Tests/        # unit/integration coverage through phase 5
+policies/
+  org.yml
+  models.yml
+  tools.yml
+  workspaces/*.yml
 ```
 
 ## Quick Start
 
-### 1) Build and test
+### Build and test
 
 ```powershell
+dotnet restore LeaseGate.sln
 dotnet build LeaseGate.sln
 dotnet test LeaseGate.sln
 ```
 
-### 2) Run sample workflow
+### Run sample scenarios
 
 ```powershell
 dotnet run --project samples/LeaseGate.SampleCli -- simulate-all
 ```
 
-Expected output includes:
+### Operational commands
 
-- Concurrency denies when in-flight leases exceed limit
-- Budget deny with recommendation
-- Policy deny for disallowed model/capability
-- Approval-required deny and grant/retry path
-- Stress report with top deny reasons
-- Audit location path with JSONL events
+```powershell
+dotnet run --project samples/LeaseGate.SampleCli -- daily-report
+dotnet run --project samples/LeaseGate.SampleCli -- export-proof
+dotnet run --project samples/LeaseGate.SampleCli -- verify-receipt
+```
 
 ## Integration Snapshot
 
-Typical app integration uses `LeaseGateClient`, an `IModelProvider` adapter, and `GovernedModelCall.ExecuteProviderCallAsync(...)`:
+Typical application flow:
 
-1. Estimate tokens/cost and build `AcquireLeaseRequest`
-2. Acquire lease from local governor
-3. Execute provider/tool delegate
-4. Release lease with actual usage and classified outcome
+1. Build an `AcquireLeaseRequest` with actor, org/workspace, intent, model, estimated usage, tools, and context contributions.
+2. Acquire through `LeaseGateClient.AcquireAsync(...)`.
+3. Execute model/tool work (or use `GovernedModelCall.ExecuteProviderCallAsync(...)`).
+4. Release through `LeaseGateClient.ReleaseAsync(...)` with actual telemetry and outcomes.
+5. Persist/verify receipt evidence when needed.
 
 See [docs/Protocol.md](docs/Protocol.md) and [docs/Architecture.md](docs/Architecture.md).
 
-## Migration Quickstart
+## GitOps Policy Workflow
 
-Upgrading from Phase 1 to Phase 2:
+Policy source lives in `policies/` and is loaded through GitOps YAML composition.
 
-1. Populate new acquire fields (`requestedContextTokens`, `requestedRetrievedChunks`, `estimatedToolOutputTokens`, `estimatedComputeUnits`, `requestedTools`).
-2. Read `AcquireLeaseResponse.constraints` and enforce overrides/caps in your execution path.
-3. Send richer release telemetry (`latencyMs`, `providerErrorClassification`, `toolCalls[]`).
-4. Handle `ApprovalRequiredException` by requesting/granting approval and retrying with `approvalToken`.
-5. Prefer adapter-based execution via `IModelProvider` + `GovernedModelCall.ExecuteProviderCallAsync(...)`.
+- `org.yml` for shared defaults and global thresholds
+- `models.yml` for model allowlists and workspace model overrides
+- `tools.yml` for denied/approval-required categories and reviewer requirements
+- `workspaces/*.yml` for workspace-level budgets and role capability maps
 
-Full checklist: [CHANGELOG.md](CHANGELOG.md) under **0.2.0 → Integration Migration Checklist**.
+CI validation and bundle signing are provided by:
 
-## Integration Snippet
+- `.github/workflows/policy-ci.yml`
+- `scripts/build-policy-bundle.ps1`
 
-```csharp
-using LeaseGate.Client;
-using LeaseGate.Protocol;
-using LeaseGate.Providers;
-
-var client = new LeaseGateClient(new LeaseGateClientOptions
-{
-  PipeName = "leasegate-governor",
-  FallbackMode = FallbackMode.Prod
-});
-
-IModelProvider provider = new DeterministicFakeProviderAdapter();
-
-var spec = new ModelCallSpec
-{
-  ProviderId = "fake",
-  ModelId = "gpt-4o-mini",
-  Prompt = "Summarize this incident in 3 bullets.",
-  PromptTokens = 220,
-  MaxOutputTokens = 120,
-  Temperature = 0.2
-};
-
-var acquire = new AcquireLeaseRequest
-{
-  ActorId = "agent-1",
-  WorkspaceId = "ops",
-  ActionType = ActionType.ChatCompletion,
-  ModelId = spec.ModelId,
-  ProviderId = spec.ProviderId,
-  EstimatedPromptTokens = spec.PromptTokens,
-  MaxOutputTokens = spec.MaxOutputTokens,
-  RequestedContextTokens = 220,
-  RequestedRetrievedChunks = 4,
-  EstimatedToolOutputTokens = 0,
-  EstimatedComputeUnits = 1,
-  RequestedCapabilities = new() { "chat" },
-  RequestedTools = new(),
-  IdempotencyKey = Guid.NewGuid().ToString("N")
-};
-
-try
-{
-  var result = await GovernedModelCall.ExecuteProviderCallAsync(client, provider, spec, acquire, CancellationToken.None);
-  Console.WriteLine(result.OutputText);
-}
-catch (ApprovalRequiredException)
-{
-  var approval = await client.RequestApprovalAsync(new ApprovalRequest
-  {
-    ActorId = acquire.ActorId,
-    WorkspaceId = acquire.WorkspaceId,
-    Reason = "risky tool action required",
-    RequestedBy = "agent-1",
-    ToolCategory = ToolCategory.NetworkWrite,
-    SingleUse = true,
-    TtlSeconds = 300,
-    IdempotencyKey = Guid.NewGuid().ToString("N")
-  }, CancellationToken.None);
-
-  var grant = await client.GrantApprovalAsync(new GrantApprovalRequest
-  {
-    ApprovalId = approval.ApprovalId,
-    GrantedBy = "oncall-admin",
-    IdempotencyKey = Guid.NewGuid().ToString("N")
-  }, CancellationToken.None);
-
-  acquire.ApprovalToken = grant.ApprovalToken;
-  acquire.IdempotencyKey = Guid.NewGuid().ToString("N");
-
-  var retried = await GovernedModelCall.ExecuteProviderCallAsync(client, provider, spec, acquire, CancellationToken.None);
-  Console.WriteLine(retried.OutputText);
-}
-```
-
-## Configuration
-
-Sample policy lives at:
-
-- `samples/LeaseGate.SampleCli/policy.json`
-
-Core policy fields:
-
-- `maxInFlight`
-- `dailyBudgetCents`
-- `maxRequestsPerMinute`
-- `maxTokensPerMinute`
-- `maxContextTokens`
-- `maxToolCallsPerLease`
-- `allowedModels`
-- `allowedCapabilities`
-- `allowedToolsByActorWorkspace`
-- `approvalRequiredToolCategories`
-- `riskRequiresApproval`
-
-Details: [docs/Policy.md](docs/Policy.md).
-
-## Audit Output
-
-Audit events are append-only JSONL, one event per line:
-
-- `lease_acquired`
-- `lease_denied`
-- `lease_released`
-- `lease_expired`
-
-Each event includes `protocolVersion` and `policyHash`.
-
-Details: [docs/Operations.md](docs/Operations.md).
-
-## Document Index
+## Documentation Index
 
 - [docs/Architecture.md](docs/Architecture.md)
 - [docs/Protocol.md](docs/Protocol.md)

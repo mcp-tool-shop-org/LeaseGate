@@ -2,118 +2,136 @@
 
 ## Overview
 
-Protocol v0.1 defines deterministic request/response contracts for commands:
+LeaseGate protocol v0.1 defines deterministic command contracts over local named pipes using length-prefixed JSON envelopes.
+
+Core command set:
 
 - `Acquire`
 - `Release`
 - `RequestApproval`
 - `GrantApproval`
 - `DenyApproval`
+- `ListPendingApprovals`
+- `ReviewApproval`
 - `GetMetrics`
+- `GetStatus`
+- `ExportDiagnostics`
+- `ExportRunawayReport`
+- `StagePolicyBundle`
+- `ActivatePolicy`
+- `RequestToolSubLease`
+- `ExecuteToolCall`
 
-Transport is local named pipes with length-prefixed JSON payloads.
+## Envelope and versioning
 
-## Versioning
-
-- `ProtocolVersion`: `0.1`
-- Included in top-level pipe envelope
-- Included in audit events
+- `ProtocolVersion`: `0.1` (from `ProtocolVersionInfo.ProtocolVersion`)
+- Commands are wrapped in `PipeCommandRequest` / `PipeCommandResponse`
+- Protocol version and policy metadata are propagated into audit events and responses
 
 ## AcquireLeaseRequest
 
-Fields:
+Primary identity and scope fields:
 
-- `actorId`
-- `workspaceId`
-- `actionType` (`chatCompletion`, `embedding`, `toolCall`, `workflowStep`)
-- `modelId`
-- `providerId`
-- `estimatedPromptTokens`
-- `maxOutputTokens`
-- `estimatedCostCents`
-- `requestedContextTokens`
-- `requestedRetrievedChunks`
-- `estimatedToolOutputTokens`
-- `estimatedComputeUnits`
-- `requestedCapabilities` (list)
-- `requestedTools` (structured list: `toolId`, `category`)
-- `riskFlags` (list)
+- `sessionId`, `clientInstanceId`
+- `orgId`, `actorId`, `workspaceId`
+- `principalType`, `role`, `authToken`
+
+Execution intent and estimate fields:
+
+- `actionType`, `modelId`, `providerId`, `intentClass`
+- `autoApplyConstraints`
+- `estimatedPromptTokens`, `maxOutputTokens`, `estimatedCostCents`
+- `estimatedComputeUnits`, `estimatedToolOutputTokens`
+
+Context governance fields:
+
+- `requestedContextTokens`, `requestedRetrievedChunks`
+- `requestedRetrievedBytes`, `requestedRetrievedTokens`
+- `contextContributions[]` (`sourceId`, `chunks`, `bytes`, `tokens`)
+
+Tool/risk fields:
+
+- `requestedCapabilities[]`
+- `requestedTools[]` (`toolId`, `category`)
+- `riskFlags[]`
 - `approvalToken`
 - `idempotencyKey`
 
 ## AcquireLeaseResponse
 
-Fields:
-
-- `granted`
-- `leaseId`
-- `expiresAtUtc`
+- `granted`, `leaseId`, `expiresAtUtc`
 - `constraints` (`maxOutputTokensOverride`, `forcedModelId`, `maxToolCalls`, `maxContextTokens`, `cooldownMs`)
-- `deniedReason`
-- `retryAfterMs`
-- `recommendation`
+- `deniedReason`, `retryAfterMs`, `recommendation`
 - `idempotencyKey`
+- `policyVersion`, `policyHash`
+- `orgId`, `principalType`, `role`
+- `leaseLocality` (`localIssued` or `hubIssued`)
+- `degradedMode`
+- `fallbackPlan[]` (`rank`, `action`, `detail`)
 
-## ReleaseLeaseRequest
+## Release contracts
 
-Fields:
+### ReleaseLeaseRequest
 
 - `leaseId`
-- `actualPromptTokens`
-- `actualOutputTokens`
-- `actualCostCents`
-- `toolCallsCount`
-- `bytesIn`
-- `bytesOut`
-- `latencyMs`
+- actual usage telemetry (`actualPromptTokens`, `actualOutputTokens`, `actualCostCents`, `latencyMs`, `bytesIn`, `bytesOut`)
+- tool telemetry (`toolCallsCount`, `toolCalls[]` with sub-lease and per-call outcome)
 - `providerErrorClassification`
-- `toolCalls[]` (`toolId`, `category`, `durationMs`, `bytesIn`, `bytesOut`, `outcome`)
-- `outcome` (`success`, `providerRateLimit`, `timeout`, `policyDenied`, `toolError`, `unknownError`)
+- `outcome`
 - `idempotencyKey`
 
-## ReleaseLeaseResponse
-
-Fields:
+### ReleaseLeaseResponse
 
 - `classification` (`recorded`, `leaseNotFound`, `leaseExpired`)
-- `recommendation`
-- `idempotencyKey`
+- `recommendation`, `idempotencyKey`
+- `policyVersion`, `policyHash`
+- `receipt` (when recorded)
 
-## Additional Phase 2 DTOs
+`receipt` includes:
+
+- lease + policy + usage summary
+- `auditEntryHash`
+- `approvalChain[]`
+- `contextSummaries[]`
+
+## Approvals and reviews
 
 - `ApprovalRequest` / `ApprovalRequestResponse`
 - `GrantApprovalRequest` / `GrantApprovalResponse`
 - `DenyApprovalRequest` / `DenyApprovalResponse`
-- `MetricsSnapshot` (active leases, spend, utilization, grants/denies by reason)
+- `ApprovalQueueRequest` / `ApprovalQueueResponse`
+- `ReviewApprovalRequest` / `ReviewApprovalResponse`
 
-## Deny Semantics
+Approval queue items include reviewer traces, required reviewer counts, and current approval count.
 
-Denies are explicit and testable:
+## Tool governance contracts
 
-- Concurrency full -> `concurrency_limit_reached`
-- Daily budget exceeded -> `daily_budget_exceeded`
-- Rate window exceeded -> `rate_limit_reached`
-- Context/chunk/tool-output exceeded -> context-specific reasons
-- Compute pool exhausted -> `compute_capacity_reached`
-- Tool category/policy block -> tool-specific reason
-- Risky tool without valid scoped approval -> `approval_required`
-- Policy model/capability/risk reject -> reason from policy evaluator
+- `ToolSubLeaseRequest` / `ToolSubLeaseResponse`
+- `ToolExecutionRequest` / `ToolExecutionResponse`
 
-Responses include actionable recommendations where possible.
+These contracts enforce bounded calls, timeout ceilings, output-size ceilings, and path/host/command policy checks.
 
-## Serialization
+## Operational/reporting contracts
 
-`ProtocolJson` settings are pinned:
+- `MetricsSnapshot`
+- `GovernorStatusResponse`
+- `ExportDiagnosticsRequest` / `ExportDiagnosticsResponse`
+- `ExportRunawayReportRequest` / `ExportRunawayReportResponse`
+- `DailyReportResponse`
 
-- `camelCase`
-- string enums
+## Policy lifecycle contracts
+
+- `PolicyBundle`
+- `StagePolicyBundleResponse`
+- `ActivatePolicyRequest`
+- `ActivatePolicyResponse`
+
+## Serialization and idempotency
+
+`ProtocolJson` settings are stable and deterministic:
+
+- camelCase field naming
+- string enum serialization
 - null omission
 
-This keeps wire contracts stable across client/service boundaries.
-
-## Idempotency
-
-`idempotencyKey` is carried on acquire and release DTOs.
-
-- Repeated acquire with same key returns same active lease when present.
-- Retries are safe for transient client/service issues.
+Most state-mutating requests support `idempotencyKey`, and repeated keys are handled safely for retry scenarios.

@@ -1,94 +1,99 @@
 # Operations Guide
 
-## Running the Service (Sample Host)
+## Sample host commands
 
-Phase 1 includes an in-process sample host in `LeaseGate.SampleCli`.
+`LeaseGate.SampleCli` provides operational and validation scenarios:
 
 ```powershell
+dotnet run --project samples/LeaseGate.SampleCli -- simulate-concurrency
+dotnet run --project samples/LeaseGate.SampleCli -- simulate-adapter
+dotnet run --project samples/LeaseGate.SampleCli -- simulate-approval
+dotnet run --project samples/LeaseGate.SampleCli -- simulate-high-cost
+dotnet run --project samples/LeaseGate.SampleCli -- simulate-stress
 dotnet run --project samples/LeaseGate.SampleCli -- simulate-all
+dotnet run --project samples/LeaseGate.SampleCli -- daily-report
+dotnet run --project samples/LeaseGate.SampleCli -- export-proof
+dotnet run --project samples/LeaseGate.SampleCli -- verify-receipt
 ```
 
-Commands:
+## Runtime observability endpoints
 
-- `simulate-concurrency`
-- `simulate-adapter`
-- `simulate-approval`
-- `simulate-high-cost`
-- `simulate-stress`
-- `simulate-all`
+Use client/governor commands for runtime checks:
 
-## Audit Logs
+- `GetMetrics`: active leases, spend, pool utilization, grant/deny distributions
+- `GetStatus`: health, uptime, durable-state info, policy version/hash
+- `ExportDiagnostics`: status + metrics + effective runtime snapshot
+- `ExportRunawayReport`: runaway/safety incident summary
 
-Audit files are JSONL in a daily file:
+## Audit and evidence artifacts
+
+### Audit logs
+
+Daily JSONL file:
 
 - `leasegate-audit-YYYY-MM-DD.jsonl`
 
-Events:
+Common event types include:
 
 - `lease_acquired`
 - `lease_denied`
 - `lease_released`
 - `lease_expired`
+- `lease_expired_by_restart`
 
-Common fields:
+Each entry carries policy metadata and hash-chain linkage.
 
-- `timestampUtc`
-- `protocolVersion`
-- `policyHash`
-- request summary fields
-- decision/recommendation details
+### Governance receipts
 
-## Failure Behavior
+Release responses may include a `receipt` with:
 
-### Client-side fallback
+- lease usage summary
+- policy hash
+- audit anchor hash
+- approval review trace
+- context summarization trace
 
-If service is unavailable:
+Use proof workflows to export and verify receipts.
 
-- Dev mode: allows bounded low-risk operations
-- Prod mode: denies risky operations, allows limited read-only chat
+## Distributed operation (Hub/Agent)
 
-### Approval workflow
+- Agent forwards governance requests to Hub for shared quota/accounting when available.
+- If Hub is unavailable, Agent can continue in degraded mode with constrained local enforcement.
+- Acquire responses expose locality/degraded indicators for downstream handling.
 
-- `RequestApproval` creates pending request with scope and TTL
-- `GrantApproval` mints scoped token
-- `DenyApproval` blocks request
-- Single-use grants are consumed on first valid acquire
+## Failure and safety behavior
 
-### Lease expiry safety
+### Client fallback
 
-If client crashes or never releases:
+If governor is unavailable:
 
-- lease expires by TTL
-- governor returns reserved resources
-- expiry is logged
+- Dev mode: bounded low-risk fallback
+- Prod mode: deny risky operations and constrain read-only paths
 
-## Health Checks
+### Approval pipeline
 
-Recommended checks for host processes:
+- Request enters pending queue
+- Reviewers approve/deny via queue review commands
+- Token is issued when reviewer threshold is met
+- Single-use tokens are consumed on first valid acquire
 
-- named pipe bind success
-- acquire/release latency percentiles
-- deny rate by reason
-- audit write error count
-- metrics snapshot from `GetMetrics` command
+### Runaway suppression
 
-## Stress Test
+Safety automation reacts to repeated failures or policy-deny bursts by issuing recommendations such as cooldown windows and output clamps.
 
-Run:
+## Routine operator checks
 
-```powershell
-dotnet run --project samples/LeaseGate.SampleCli -- simulate-stress
-```
+1. Confirm named pipe bind and process health.
+2. Check `GetStatus` for policy version/hash and durable-state health.
+3. Review deny distribution drift in `GetMetrics`.
+4. Export diagnostics during incidents.
+5. Review daily report spend/alerts.
+6. Verify receipt proofs for sampled high-risk actions.
 
-Output report includes:
+## Incident playbook
 
-- total grant/deny counts
-- active lease count (leak check)
-- top deny reasons
-
-## Incident Playbook
-
-1. Inspect latest audit file for deny spikes and reason distributions
-2. Verify current `policyHash` and corresponding policy file revision
-3. Confirm budget and in-flight settings are appropriate for load
-4. Validate client fallback mode in production configuration
+1. Inspect latest audit file and runaway report for onset conditions.
+2. Correlate deny spikes to policy hash/version and recent policy bundle activation.
+3. Validate org/workspace/actor quota headroom and fairness settings.
+4. Review approval queue backlog and reviewer throughput.
+5. If needed, stage/activate corrected policy bundle and monitor recovery metrics.

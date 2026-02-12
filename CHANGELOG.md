@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.5.0 - 2026-02-12
+
+Phase 5 autonomous governance and proof release.
+
+### Added
+
+- GitOps policy-as-code flow with composed YAML policy sets under `policies/`
+- CI policy validation and signed policy bundle creation workflow
+- Intent-aware routing rules with deterministic fallback plan generation
+- Context governance controls for chunk/token/byte thresholds and governed summarization path
+- Safety automation for runaway suppression:
+	- lease retry thresholding
+	- tool loop detection
+	- policy deny circuit breaker
+	- cooldown and output clamp recommendations
+- Governance proof tooling:
+	- receipt bundle export
+	- signature verification
+	- audit-anchor verification against hash-chained logs
+- CLI commands for `daily-report`, `export-proof`, and `verify-receipt`
+
+## 0.4.0 - 2026-02-12
+
+Phase 4 organization-scale governance release.
+
+### Added
+
+- RBAC-aware acquire flow with principal and role propagation
+- Service account policy controls with scoped capabilities/models/tools
+- Hub + Agent distributed mode with fallback to local degraded enforcement
+- Hierarchical quotas (org, workspace, actor) with fairness controls
+- Approval queue APIs with reviewer trails and multi-reviewer support
+- Cost attribution tracking and daily governance report model
+- Alert signal generation and export summary/report surfaces
+- Expanded distributed and governance test coverage
+
 ## 0.3.0 - 2026-02-12
 
 Phase 3 production-hardening release.
