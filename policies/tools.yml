@@ -1,0 +1,13 @@
+deniedToolCategories:
+  - networkWrite
+  - exec
+approvalRequiredToolCategories:
+  - networkWrite
+approvalReviewersByToolCategory:
+  networkWrite: 2
+allowedToolsByWorkspaceRole:
+  ws-alpha|Member:
+    - net.fetch
+  ws-alpha|Admin:
+    - net.fetch
+    - net.post

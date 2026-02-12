@@ -1,0 +1,19 @@
+workspaceId: ws-alpha
+dailyBudgetCents: 600
+maxRequestsPerMinute: 120
+maxTokensPerMinute: 10000
+allowedCapabilitiesByRole:
+  viewer:
+    chatCompletion:
+      - read
+  member:
+    chatCompletion:
+      - chat
+      - read
+  admin:
+    chatCompletion:
+      - chat
+      - read
+    toolCall:
+      - chat
+      - read

@@ -1,0 +1,16 @@
+version: v5-gitops
+orgId: org-acme
+defaults:
+  dailyBudgetCents: 1000
+  maxInFlight: 6
+  maxRequestsPerMinute: 180
+  maxTokensPerMinute: 15000
+  maxContextTokens: 8000
+  maxRetrievedChunks: 12
+  maxToolOutputTokens: 1000
+  maxToolCallsPerLease: 6
+  maxComputeUnits: 6
+denyByDefault:
+  riskyToolCategories:
+    - networkWrite
+    - exec

@@ -1,0 +1,48 @@
+name: policy-ci
+
+on:
+  pull_request:
+    paths:
+      - 'policies/**'
+      - 'src/LeaseGate.Policy/**'
+      - 'tests/LeaseGate.Tests/Phase5GitOpsPolicyTests.cs'
+      - '.github/workflows/policy-ci.yml'
+  push:
+    branches: [ main ]
+    paths:
+      - 'policies/**'
+      - 'src/LeaseGate.Policy/**'
+      - 'tests/LeaseGate.Tests/Phase5GitOpsPolicyTests.cs'
+      - '.github/workflows/policy-ci.yml'
+
+jobs:
+  validate-and-bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Run policy tests
+        run: dotnet test LeaseGate.sln --filter Phase5GitOpsPolicyTests
+
+      - name: Build signed policy bundle
+        env:
+          LEASEGATE_POLICY_SIGNING_KEY: ${{ secrets.LEASEGATE_POLICY_SIGNING_KEY }}
+        run: pwsh ./scripts/build-policy-bundle.ps1 -PoliciesPath policies -OutputDir artifacts -Version ${{ github.sha }}
+
+      - name: Upload policy bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: policy-bundle-${{ github.sha }}
+          path: artifacts/*
+
+      - name: Publish policy bundle on main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: policy-bundle-${{ github.sha }}
+          files: artifacts/*
