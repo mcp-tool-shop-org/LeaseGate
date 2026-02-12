@@ -131,6 +131,29 @@ internal sealed class DistributedQuotaManager
         }
     }
 
+    public void Rollback(AcquireLeaseRequest request)
+    {
+        lock (_lock)
+        {
+            _orgSpendCents = Math.Max(0, _orgSpendCents - request.EstimatedCostCents);
+
+            if (_workspaceSpend.TryGetValue(request.WorkspaceId, out var workspaceSpent))
+            {
+                _workspaceSpend[request.WorkspaceId] = Math.Max(0, workspaceSpent - request.EstimatedCostCents);
+            }
+
+            if (_actorSpend.TryGetValue(request.ActorId, out var actorSpent))
+            {
+                _actorSpend[request.ActorId] = Math.Max(0, actorSpent - request.EstimatedCostCents);
+            }
+
+            if (_actorInFlight.TryGetValue(request.ActorId, out var active) && active > 0)
+            {
+                _actorInFlight[request.ActorId] = active - 1;
+            }
+        }
+    }
+
     private RatePool GetWorkspacePool(string workspaceId, int req, int tok)
     {
         if (_workspaceRatePools.TryGetValue(workspaceId, out var existing))

@@ -1,5 +1,6 @@
 ﻿using LeaseGate.Audit;
 using LeaseGate.Client;
+using LeaseGate.Hub;
 using LeaseGate.Policy;
 using LeaseGate.Protocol;
 using LeaseGate.Providers;
@@ -73,8 +74,11 @@ switch (command)
 		await SimulatePolicyGateAsync(client);
 		await SimulateStressAsync(client, provider);
 		break;
+	case "daily-report":
+		await PrintDailyReportAsync(policyPath);
+		break;
 	default:
-		Console.WriteLine("Commands: simulate-concurrency | simulate-adapter | simulate-approval | simulate-high-cost | simulate-stress | simulate-all");
+		Console.WriteLine("Commands: simulate-concurrency | simulate-adapter | simulate-approval | simulate-high-cost | simulate-stress | simulate-all | daily-report");
 		break;
 }
 
@@ -371,4 +375,52 @@ static async Task SimulateStressAsync(LeaseGateClient client, IModelProvider pro
 
 	Console.WriteLine($"stress report: grants={metrics.GrantsByReason.Values.Sum()} denies={metrics.DeniesByReason.Values.Sum()} active={metrics.ActiveLeases}");
 	Console.WriteLine($"top deny reasons: {string.Join(", ", topDenies)}");
+}
+
+static async Task PrintDailyReportAsync(string policyPath)
+{
+	Console.WriteLine("-- daily report --");
+	using var hub = new HubControlPlane(new LeaseGovernorOptions
+	{
+		MaxInFlight = 4,
+		DailyBudgetCents = 500,
+		MaxRequestsPerMinute = 200,
+		MaxTokensPerMinute = 20000,
+		EnableDurableState = false
+	}, policyPath);
+
+	var acquire = await hub.AcquireAsync(new AcquireLeaseRequest
+	{
+		SessionId = Guid.NewGuid().ToString("N"),
+		ClientInstanceId = "sample-cli",
+		OrgId = "org-sample",
+		ActorId = "demo",
+		WorkspaceId = "sample",
+		PrincipalType = PrincipalType.Human,
+		Role = Role.Member,
+		ActionType = ActionType.ChatCompletion,
+		ModelId = "gpt-4o-mini",
+		ProviderId = "fake",
+		EstimatedPromptTokens = 20,
+		MaxOutputTokens = 20,
+		EstimatedCostCents = 2,
+		RequestedCapabilities = new List<string> { "chat" },
+		RequestedTools = new List<ToolIntent>(),
+		IdempotencyKey = "daily-report-seed"
+	}, CancellationToken.None);
+
+	if (acquire.Granted)
+	{
+		await hub.ReleaseAsync(new ReleaseLeaseRequest
+		{
+			LeaseId = acquire.LeaseId,
+			ActualPromptTokens = 10,
+			ActualOutputTokens = 10,
+			ActualCostCents = 2,
+			Outcome = LeaseOutcome.Success,
+			IdempotencyKey = "daily-report-release"
+		}, CancellationToken.None);
+	}
+
+	Console.WriteLine(hub.PrintDailyReport());
 }

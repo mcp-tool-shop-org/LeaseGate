@@ -285,6 +285,48 @@ public sealed class MetricsSnapshot
     public Dictionary<string, long> DeniesByReason { get; set; } = new();
 }
 
+public sealed class CostAttributionRow
+{
+    public string OrgId { get; set; } = string.Empty;
+    public string WorkspaceId { get; set; } = string.Empty;
+    public string ActorId { get; set; } = string.Empty;
+    public string ModelId { get; set; } = string.Empty;
+    public string ToolId { get; set; } = string.Empty;
+    public int SpendCents { get; set; }
+    public int Count { get; set; }
+}
+
+public sealed class AlertSignal
+{
+    public string Code { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+    public DateTimeOffset TriggeredAtUtc { get; set; }
+}
+
+public sealed class DailyReportResponse
+{
+    public DateTimeOffset GeneratedAtUtc { get; set; }
+    public int TotalSpendCents { get; set; }
+    public List<CostAttributionRow> TopSpenders { get; set; } = new();
+    public Dictionary<string, int> TopDeniedReasons { get; set; } = new();
+    public List<AlertSignal> Alerts { get; set; } = new();
+}
+
+public sealed class ExportSummaryRequest
+{
+    public string OutputPath { get; set; } = string.Empty;
+    public string Format { get; set; } = "json";
+    public string IdempotencyKey { get; set; } = string.Empty;
+}
+
+public sealed class ExportSummaryResponse
+{
+    public bool Exported { get; set; }
+    public string OutputPath { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+    public string IdempotencyKey { get; set; } = string.Empty;
+}
+
 public sealed class GovernorStatusResponse
 {
     public DateTimeOffset TimestampUtc { get; set; }
