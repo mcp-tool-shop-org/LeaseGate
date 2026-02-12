@@ -6,6 +6,7 @@
     <ProjectReference Include="..\..\src\LeaseGate.Service\LeaseGate.Service.csproj" />
     <ProjectReference Include="..\..\src\LeaseGate.Policy\LeaseGate.Policy.csproj" />
     <ProjectReference Include="..\..\src\LeaseGate.Audit\LeaseGate.Audit.csproj" />
+    <ProjectReference Include="..\..\src\LeaseGate.Providers\LeaseGate.Providers.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

@@ -1,4 +1,5 @@
 using LeaseGate.Protocol;
+using LeaseGate.Providers;
 
 namespace LeaseGate.Client;
 
@@ -24,6 +25,11 @@ public static class GovernedModelCall
         var acquired = await client.AcquireAsync(acquireRequest, cancellationToken);
         if (!acquired.Granted)
         {
+            if (string.Equals(acquired.DeniedReason, "approval_required", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ApprovalRequiredException(acquired);
+            }
+
             throw new InvalidOperationException($"Lease denied: {acquired.DeniedReason}; recommendation: {acquired.Recommendation}");
         }
 
@@ -56,6 +62,65 @@ public static class GovernedModelCall
                 ToolCallsCount = 0,
                 BytesIn = 0,
                 BytesOut = 0,
+                Outcome = LeaseOutcome.UnknownError,
+                IdempotencyKey = acquireRequest.IdempotencyKey
+            }, cancellationToken);
+            throw;
+        }
+    }
+
+    public static async Task<ModelCallResult> ExecuteProviderCallAsync(
+        LeaseGateClient client,
+        IModelProvider provider,
+        ModelCallSpec spec,
+        AcquireLeaseRequest acquireRequest,
+        CancellationToken cancellationToken)
+    {
+        acquireRequest.EstimatedCostCents = provider.EstimateCost(spec);
+        var acquired = await client.AcquireAsync(acquireRequest, cancellationToken);
+        if (!acquired.Granted)
+        {
+            if (string.Equals(acquired.DeniedReason, "approval_required", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ApprovalRequiredException(acquired);
+            }
+
+            throw new InvalidOperationException($"Lease denied: {acquired.DeniedReason}; recommendation: {acquired.Recommendation}");
+        }
+
+        try
+        {
+            var result = await provider.ExecuteAsync(spec, cancellationToken);
+            await client.ReleaseAsync(new ReleaseLeaseRequest
+            {
+                LeaseId = acquired.LeaseId,
+                ActualPromptTokens = result.ActualPromptTokens,
+                ActualOutputTokens = result.ActualOutputTokens,
+                ActualCostCents = result.ActualCostCents,
+                ToolCallsCount = 0,
+                BytesIn = result.ActualPromptTokens * 4L,
+                BytesOut = result.ActualOutputTokens * 4L,
+                LatencyMs = result.LatencyMs,
+                ProviderErrorClassification = result.ErrorClassification,
+                Outcome = result.Outcome,
+                IdempotencyKey = acquireRequest.IdempotencyKey
+            }, cancellationToken);
+
+            return result;
+        }
+        catch (Exception)
+        {
+            await client.ReleaseAsync(new ReleaseLeaseRequest
+            {
+                LeaseId = acquired.LeaseId,
+                ActualPromptTokens = 0,
+                ActualOutputTokens = 0,
+                ActualCostCents = 0,
+                ToolCallsCount = 0,
+                BytesIn = 0,
+                BytesOut = 0,
+                LatencyMs = 0,
+                ProviderErrorClassification = ProviderErrorClassification.Unknown,
                 Outcome = LeaseOutcome.UnknownError,
                 IdempotencyKey = acquireRequest.IdempotencyKey
             }, cancellationToken);
