@@ -68,3 +68,9 @@ public enum Role
     Viewer,
     ServiceAccount
 }
+
+public enum LeaseLocality
+{
+    LocalIssued,
+    HubIssued
+}

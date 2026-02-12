@@ -2,6 +2,8 @@ namespace LeaseGate.Protocol;
 
 public sealed class AcquireLeaseRequest
 {
+    public string SessionId { get; set; } = string.Empty;
+    public string ClientInstanceId { get; set; } = string.Empty;
     public string OrgId { get; set; } = string.Empty;
     public string ActorId { get; set; } = string.Empty;
     public string WorkspaceId { get; set; } = string.Empty;
@@ -40,6 +42,8 @@ public sealed class AcquireLeaseResponse
     public string OrgId { get; set; } = string.Empty;
     public PrincipalType PrincipalType { get; set; } = PrincipalType.Human;
     public Role Role { get; set; } = Role.Member;
+    public LeaseLocality LeaseLocality { get; set; } = LeaseLocality.LocalIssued;
+    public bool DegradedMode { get; set; }
 }
 
 public sealed class LeaseConstraints
