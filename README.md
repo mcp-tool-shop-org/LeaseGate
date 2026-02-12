@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.jpg" alt="LeaseGate" width="500">
+</p>
+
 # LeaseGate
 
 [![Build](https://github.com/mcp-tool-shop-org/LeaseGate/actions/workflows/policy-ci.yml/badge.svg)](https://github.com/mcp-tool-shop-org/LeaseGate/actions)
