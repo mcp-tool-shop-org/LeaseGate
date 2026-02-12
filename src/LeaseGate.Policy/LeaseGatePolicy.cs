@@ -4,6 +4,7 @@ namespace LeaseGate.Policy;
 
 public sealed class LeaseGatePolicy
 {
+    public string PolicyVersion { get; set; } = "local";
     public int MaxInFlight { get; set; } = 4;
     public int DailyBudgetCents { get; set; } = 500;
     public int MaxRequestsPerMinute { get; set; } = 120;
@@ -19,6 +20,10 @@ public sealed class LeaseGatePolicy
     public Dictionary<string, List<string>> AllowedToolsByActorWorkspace { get; set; } = new();
     public List<ToolCategory> DeniedToolCategories { get; set; } = new();
     public List<ToolCategory> ApprovalRequiredToolCategories { get; set; } = new();
+    public List<string> AllowedFileRoots { get; set; } = new();
+    public List<string> AllowedNetworkHosts { get; set; } = new();
+    public int DefaultToolTimeoutMs { get; set; } = 2_000;
+    public long MaxToolOutputBytes { get; set; } = 16_384;
 }
 
 public sealed class PolicyDecision

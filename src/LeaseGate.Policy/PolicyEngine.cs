@@ -9,20 +9,25 @@ public interface IPolicyEngine
 {
     PolicySnapshot CurrentSnapshot { get; }
     PolicyDecision Evaluate(AcquireLeaseRequest request);
+    StagePolicyBundleResponse StageBundle(PolicyBundle bundle);
+    ActivatePolicyResponse ActivateStaged(ActivatePolicyRequest request);
 }
 
 public sealed class PolicyEngine : IPolicyEngine, IDisposable
 {
     private readonly string _policyFilePath;
     private readonly bool _hotReload;
+    private readonly PolicyEngineOptions _options;
     private readonly object _lock = new();
     private FileSystemWatcher? _watcher;
     private PolicySnapshot _snapshot;
+    private PolicySnapshot? _stagedSnapshot;
 
-    public PolicyEngine(string policyFilePath, bool hotReload = false)
+    public PolicyEngine(string policyFilePath, bool hotReload = false, PolicyEngineOptions? options = null)
     {
         _policyFilePath = policyFilePath;
         _hotReload = hotReload;
+        _options = options ?? new PolicyEngineOptions();
         _snapshot = LoadSnapshot(policyFilePath);
 
         if (_hotReload)
@@ -103,6 +108,90 @@ public sealed class PolicyEngine : IPolicyEngine, IDisposable
         return PolicyDecision.Allow();
     }
 
+    public StagePolicyBundleResponse StageBundle(PolicyBundle bundle)
+    {
+        try
+        {
+            if (_options.RequireSignedBundles)
+            {
+                if (!VerifyBundleSignature(bundle))
+                {
+                    return new StagePolicyBundleResponse
+                    {
+                        Accepted = false,
+                        Message = "invalid policy bundle signature"
+                    };
+                }
+            }
+
+            var policy = ProtocolJson.Deserialize<LeaseGatePolicy>(bundle.PolicyContentJson);
+            policy.PolicyVersion = bundle.Version;
+            var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(bundle.PolicyContentJson))).ToLowerInvariant();
+
+            lock (_lock)
+            {
+                _stagedSnapshot = new PolicySnapshot
+                {
+                    Policy = policy,
+                    RawText = bundle.PolicyContentJson,
+                    PolicyHash = hash
+                };
+            }
+
+            return new StagePolicyBundleResponse
+            {
+                Accepted = true,
+                Message = "policy staged",
+                StagedPolicyHash = hash,
+                StagedPolicyVersion = policy.PolicyVersion
+            };
+        }
+        catch (Exception ex)
+        {
+            return new StagePolicyBundleResponse
+            {
+                Accepted = false,
+                Message = ex.Message
+            };
+        }
+    }
+
+    public ActivatePolicyResponse ActivateStaged(ActivatePolicyRequest request)
+    {
+        lock (_lock)
+        {
+            if (_stagedSnapshot is null)
+            {
+                return new ActivatePolicyResponse
+                {
+                    Activated = false,
+                    Message = "no staged policy"
+                };
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.Version) &&
+                !_stagedSnapshot.Policy.PolicyVersion.Equals(request.Version, StringComparison.OrdinalIgnoreCase))
+            {
+                return new ActivatePolicyResponse
+                {
+                    Activated = false,
+                    Message = "staged policy version mismatch"
+                };
+            }
+
+            _snapshot = _stagedSnapshot;
+            _stagedSnapshot = null;
+
+            return new ActivatePolicyResponse
+            {
+                Activated = true,
+                Message = "policy activated",
+                ActivePolicyHash = _snapshot.PolicyHash,
+                ActivePolicyVersion = _snapshot.Policy.PolicyVersion
+            };
+        }
+    }
+
     private static PolicySnapshot LoadSnapshot(string path)
     {
         var raw = File.ReadAllText(path);
@@ -129,6 +218,45 @@ public sealed class PolicyEngine : IPolicyEngine, IDisposable
         catch
         {
         }
+    }
+
+    private bool VerifyBundleSignature(PolicyBundle bundle)
+    {
+        if (_options.AllowedPublicKeysBase64.Count == 0)
+        {
+            return false;
+        }
+
+        byte[] signature;
+        try
+        {
+            signature = Convert.FromBase64String(bundle.SignatureBase64);
+        }
+        catch
+        {
+            return false;
+        }
+
+        var payload = Encoding.UTF8.GetBytes($"{bundle.Version}|{bundle.CreatedAtUtc:O}|{bundle.Author}|{bundle.PolicyContentJson}");
+
+        foreach (var keyBase64 in _options.AllowedPublicKeysBase64)
+        {
+            try
+            {
+                var publicKey = Convert.FromBase64String(keyBase64);
+                using var ecdsa = ECDsa.Create();
+                ecdsa.ImportSubjectPublicKeyInfo(publicKey, out _);
+                if (ecdsa.VerifyData(payload, signature, HashAlgorithmName.SHA256))
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        return false;
     }
 
     public void Dispose()
