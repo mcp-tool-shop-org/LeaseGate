@@ -9,6 +9,7 @@ public interface IPolicyEngine
 {
     PolicySnapshot CurrentSnapshot { get; }
     PolicyDecision Evaluate(AcquireLeaseRequest request);
+    bool TryResolveServiceAccount(string token, string orgId, string workspaceId, out ServiceAccountPolicy? account);
     StagePolicyBundleResponse StageBundle(PolicyBundle bundle);
     ActivatePolicyResponse ActivateStaged(ActivatePolicyRequest request);
 }
@@ -60,13 +61,34 @@ public sealed class PolicyEngine : IPolicyEngine, IDisposable
     {
         var policy = CurrentSnapshot.Policy;
         var key = $"{request.ActorId}|{request.WorkspaceId}";
+        var workspaceRoleKey = $"{request.WorkspaceId}|{request.Role}";
+
+        if (policy.AllowedModelsByWorkspace.TryGetValue(request.WorkspaceId, out var workspaceModels) &&
+            workspaceModels.Count > 0 &&
+            !workspaceModels.Contains(request.ModelId, StringComparer.OrdinalIgnoreCase))
+        {
+            return PolicyDecision.Deny("workspace_model_not_allowed", "select a model allowed for this workspace");
+        }
 
         if (policy.AllowedModels.Count > 0 && !policy.AllowedModels.Contains(request.ModelId, StringComparer.OrdinalIgnoreCase))
         {
             return PolicyDecision.Deny("model_not_allowed", "select an allowed model");
         }
 
-        if (policy.AllowedCapabilities.TryGetValue(request.ActionType, out var allowedForAction) &&
+        var roleCapabilitiesFound = policy.AllowedCapabilitiesByRole.TryGetValue(request.Role, out var roleCapabilitiesByAction) &&
+                                    roleCapabilitiesByAction is not null;
+        if (roleCapabilitiesFound &&
+            roleCapabilitiesByAction!.TryGetValue(request.ActionType, out var allowedForRoleAction) &&
+            allowedForRoleAction.Count > 0)
+        {
+            var allowed = allowedForRoleAction.ToImmutableHashSet(StringComparer.OrdinalIgnoreCase);
+            var deniedCapability = request.RequestedCapabilities.FirstOrDefault(cap => !allowed.Contains(cap));
+            if (!string.IsNullOrWhiteSpace(deniedCapability))
+            {
+                return PolicyDecision.Deny("capability_not_allowed_for_role", "remove restricted capabilities for this role");
+            }
+        }
+        else if (policy.AllowedCapabilities.TryGetValue(request.ActionType, out var allowedForAction) &&
             allowedForAction.Count > 0)
         {
             var allowed = allowedForAction.ToImmutableHashSet(StringComparer.OrdinalIgnoreCase);
@@ -105,7 +127,31 @@ public sealed class PolicyEngine : IPolicyEngine, IDisposable
             }
         }
 
+        if (policy.AllowedToolsByWorkspaceRole.TryGetValue(workspaceRoleKey, out var roleAllowedTools) && roleAllowedTools.Count > 0)
+        {
+            var allowlist = roleAllowedTools.ToImmutableHashSet(StringComparer.OrdinalIgnoreCase);
+            var blockedTool = request.RequestedTools.FirstOrDefault(t => !allowlist.Contains(t.ToolId));
+            if (blockedTool is not null)
+            {
+                return PolicyDecision.Deny(
+                    $"tool_not_allowed_for_role:{blockedTool.ToolId}",
+                    "request an allowed tool for this workspace role");
+            }
+        }
+
         return PolicyDecision.Allow();
+    }
+
+    public bool TryResolveServiceAccount(string token, string orgId, string workspaceId, out ServiceAccountPolicy? account)
+    {
+        var policy = CurrentSnapshot.Policy;
+        account = policy.ServiceAccounts.FirstOrDefault(sa =>
+            !string.IsNullOrWhiteSpace(sa.Token) &&
+            sa.Token.Equals(token, StringComparison.Ordinal) &&
+            sa.OrgId.Equals(orgId, StringComparison.OrdinalIgnoreCase) &&
+            sa.WorkspaceId.Equals(workspaceId, StringComparison.OrdinalIgnoreCase));
+
+        return account is not null;
     }
 
     public StagePolicyBundleResponse StageBundle(PolicyBundle bundle)

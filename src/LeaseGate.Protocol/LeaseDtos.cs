@@ -2,8 +2,12 @@ namespace LeaseGate.Protocol;
 
 public sealed class AcquireLeaseRequest
 {
+    public string OrgId { get; set; } = string.Empty;
     public string ActorId { get; set; } = string.Empty;
     public string WorkspaceId { get; set; } = string.Empty;
+    public PrincipalType PrincipalType { get; set; } = PrincipalType.Human;
+    public Role Role { get; set; } = Role.Member;
+    public string AuthToken { get; set; } = string.Empty;
     public ActionType ActionType { get; set; }
     public string ModelId { get; set; } = string.Empty;
     public string ProviderId { get; set; } = string.Empty;
@@ -33,6 +37,9 @@ public sealed class AcquireLeaseResponse
     public string IdempotencyKey { get; set; } = string.Empty;
     public string PolicyVersion { get; set; } = string.Empty;
     public string PolicyHash { get; set; } = string.Empty;
+    public string OrgId { get; set; } = string.Empty;
+    public PrincipalType PrincipalType { get; set; } = PrincipalType.Human;
+    public Role Role { get; set; } = Role.Member;
 }
 
 public sealed class LeaseConstraints

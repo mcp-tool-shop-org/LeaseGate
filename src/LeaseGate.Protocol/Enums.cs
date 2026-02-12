@@ -53,3 +53,18 @@ public enum ApprovalDecisionStatus
     Denied,
     Expired
 }
+
+public enum PrincipalType
+{
+    Human,
+    Service
+}
+
+public enum Role
+{
+    Owner,
+    Admin,
+    Member,
+    Viewer,
+    ServiceAccount
+}

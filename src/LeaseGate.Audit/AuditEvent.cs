@@ -1,3 +1,5 @@
+using LeaseGate.Protocol;
+
 namespace LeaseGate.Audit;
 
 public sealed class AuditEvent
@@ -7,8 +9,11 @@ public sealed class AuditEvent
     public string ProtocolVersion { get; set; } = string.Empty;
     public string PolicyHash { get; set; } = string.Empty;
     public string LeaseId { get; set; } = string.Empty;
+    public string OrgId { get; set; } = string.Empty;
     public string ActorId { get; set; } = string.Empty;
     public string WorkspaceId { get; set; } = string.Empty;
+    public PrincipalType PrincipalType { get; set; } = PrincipalType.Human;
+    public Role Role { get; set; } = Role.Member;
     public string ActionType { get; set; } = string.Empty;
     public string ModelId { get; set; } = string.Empty;
     public int EstimatedCostCents { get; set; }

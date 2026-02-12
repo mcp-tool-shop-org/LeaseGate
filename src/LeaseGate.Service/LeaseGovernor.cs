@@ -299,6 +299,16 @@ public sealed class LeaseGovernor : IDisposable
     {
         await ExpireLeasesAsync();
 
+        request.OrgId = string.IsNullOrWhiteSpace(request.OrgId) ? "default-org" : request.OrgId;
+
+        if (!AuthorizePrincipal(request, out var principalDeniedReason, out var principalRecommendation))
+        {
+            var denied = Denied(request, principalDeniedReason, null, principalRecommendation);
+            await AuditDeniedAsync(request, denied, cancellationToken);
+            _metrics.RecordDeny(principalDeniedReason);
+            return denied;
+        }
+
         var existing = _leases.GetByIdempotency(request.IdempotencyKey);
         if (existing is not null)
         {
@@ -310,7 +320,10 @@ public sealed class LeaseGovernor : IDisposable
                 Constraints = existing.Constraints,
                 IdempotencyKey = request.IdempotencyKey,
                 PolicyVersion = _policy.CurrentSnapshot.Policy.PolicyVersion,
-                PolicyHash = _policy.CurrentSnapshot.PolicyHash
+                PolicyHash = _policy.CurrentSnapshot.PolicyHash,
+                OrgId = request.OrgId,
+                PrincipalType = request.PrincipalType,
+                Role = request.Role
             };
         }
 
@@ -417,7 +430,10 @@ public sealed class LeaseGovernor : IDisposable
             Constraints = constraints,
             IdempotencyKey = request.IdempotencyKey,
             PolicyVersion = _policy.CurrentSnapshot.Policy.PolicyVersion,
-            PolicyHash = _policy.CurrentSnapshot.PolicyHash
+            PolicyHash = _policy.CurrentSnapshot.PolicyHash,
+            OrgId = request.OrgId,
+            PrincipalType = request.PrincipalType,
+            Role = request.Role
         };
 
         await _audit.WriteAsync(new AuditEvent
@@ -427,8 +443,11 @@ public sealed class LeaseGovernor : IDisposable
             ProtocolVersion = ProtocolVersionInfo.ProtocolVersion,
             PolicyHash = _policy.CurrentSnapshot.PolicyHash,
             LeaseId = lease.LeaseId,
+            OrgId = request.OrgId,
             ActorId = request.ActorId,
             WorkspaceId = request.WorkspaceId,
+            PrincipalType = request.PrincipalType,
+            Role = request.Role,
             ActionType = request.ActionType.ToString(),
             ModelId = request.ModelId,
             EstimatedCostCents = request.EstimatedCostCents,
@@ -470,8 +489,11 @@ public sealed class LeaseGovernor : IDisposable
             ProtocolVersion = ProtocolVersionInfo.ProtocolVersion,
             PolicyHash = _policy.CurrentSnapshot.PolicyHash,
             LeaseId = lease.LeaseId,
+            OrgId = lease.Request.OrgId,
             ActorId = lease.Request.ActorId,
             WorkspaceId = lease.Request.WorkspaceId,
+            PrincipalType = lease.Request.PrincipalType,
+            Role = lease.Request.Role,
             ActionType = lease.Request.ActionType.ToString(),
             ModelId = lease.Request.ModelId,
             EstimatedCostCents = lease.Request.EstimatedCostCents,
@@ -579,7 +601,10 @@ public sealed class LeaseGovernor : IDisposable
             Recommendation = recommendation,
             IdempotencyKey = request.IdempotencyKey,
             PolicyVersion = _policy.CurrentSnapshot.Policy.PolicyVersion,
-            PolicyHash = _policy.CurrentSnapshot.PolicyHash
+            PolicyHash = _policy.CurrentSnapshot.PolicyHash,
+            OrgId = request.OrgId,
+            PrincipalType = request.PrincipalType,
+            Role = request.Role
         };
     }
 
@@ -592,8 +617,11 @@ public sealed class LeaseGovernor : IDisposable
             ProtocolVersion = ProtocolVersionInfo.ProtocolVersion,
             PolicyHash = _policy.CurrentSnapshot.PolicyHash,
             LeaseId = string.Empty,
+            OrgId = request.OrgId,
             ActorId = request.ActorId,
             WorkspaceId = request.WorkspaceId,
+            PrincipalType = request.PrincipalType,
+            Role = request.Role,
             ActionType = request.ActionType.ToString(),
             ModelId = request.ModelId,
             EstimatedCostCents = request.EstimatedCostCents,
@@ -628,8 +656,11 @@ public sealed class LeaseGovernor : IDisposable
                 ProtocolVersion = ProtocolVersionInfo.ProtocolVersion,
                 PolicyHash = _policy.CurrentSnapshot.PolicyHash,
                 LeaseId = lease.LeaseId,
+                OrgId = lease.Request.OrgId,
                 ActorId = lease.Request.ActorId,
                 WorkspaceId = lease.Request.WorkspaceId,
+                PrincipalType = lease.Request.PrincipalType,
+                Role = lease.Request.Role,
                 ActionType = lease.Request.ActionType.ToString(),
                 ModelId = lease.Request.ModelId,
                 EstimatedCostCents = lease.Request.EstimatedCostCents,
@@ -686,8 +717,11 @@ public sealed class LeaseGovernor : IDisposable
                     ProtocolVersion = ProtocolVersionInfo.ProtocolVersion,
                     PolicyHash = _policy.CurrentSnapshot.PolicyHash,
                     LeaseId = persistedLease.LeaseId,
+                    OrgId = request.OrgId,
                     ActorId = request.ActorId,
                     WorkspaceId = request.WorkspaceId,
+                    PrincipalType = request.PrincipalType,
+                    Role = request.Role,
                     ActionType = request.ActionType.ToString(),
                     ModelId = request.ModelId,
                     EstimatedCostCents = request.EstimatedCostCents,
@@ -790,6 +824,59 @@ public sealed class LeaseGovernor : IDisposable
             PolicyVersion = _policy.CurrentSnapshot.Policy.PolicyVersion,
             PolicyHash = _policy.CurrentSnapshot.PolicyHash
         });
+    }
+
+    private bool AuthorizePrincipal(AcquireLeaseRequest request, out string denyReason, out string recommendation)
+    {
+        denyReason = string.Empty;
+        recommendation = string.Empty;
+
+        if (request.PrincipalType != PrincipalType.Service)
+        {
+            return true;
+        }
+
+        if (!_policy.TryResolveServiceAccount(request.AuthToken, request.OrgId, request.WorkspaceId, out var account) || account is null)
+        {
+            denyReason = "service_account_unauthorized";
+            recommendation = "supply a valid service account token scoped to org/workspace";
+            return false;
+        }
+
+        request.Role = account.Role;
+        request.ActorId = string.IsNullOrWhiteSpace(request.ActorId) ? account.Name : request.ActorId;
+
+        if (account.AllowedCapabilities.Count > 0)
+        {
+            var capabilitySet = account.AllowedCapabilities.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (request.RequestedCapabilities.Any(c => !capabilitySet.Contains(c)))
+            {
+                denyReason = "service_account_capability_denied";
+                recommendation = "reduce requested capabilities or widen service account scope";
+                return false;
+            }
+        }
+
+        if (account.AllowedModels.Count > 0 &&
+            !account.AllowedModels.Contains(request.ModelId, StringComparer.OrdinalIgnoreCase))
+        {
+            denyReason = "service_account_model_denied";
+            recommendation = "select a model allowed for this service account";
+            return false;
+        }
+
+        if (account.AllowedTools.Count > 0)
+        {
+            var toolSet = account.AllowedTools.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (request.RequestedTools.Any(t => !toolSet.Contains(t.ToolId)))
+            {
+                denyReason = "service_account_tool_denied";
+                recommendation = "request an allowed tool or update service account scope";
+                return false;
+            }
+        }
+
+        return true;
     }
 
     public void Dispose()
