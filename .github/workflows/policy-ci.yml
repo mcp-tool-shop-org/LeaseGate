@@ -15,6 +15,9 @@ on:
       - 'tests/LeaseGate.Tests/Phase5GitOpsPolicyTests.cs'
       - '.github/workflows/policy-ci.yml'
 
+permissions:
+  contents: write
+
 jobs:
   validate-and-bundle:
     runs-on: ubuntu-latest
