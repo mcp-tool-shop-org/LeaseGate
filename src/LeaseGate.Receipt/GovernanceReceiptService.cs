@@ -7,6 +7,12 @@ namespace LeaseGate.Receipt;
 
 public sealed class GovernanceReceiptService
 {
+    /// <summary>
+    /// Exports a governance receipt bundle signed with an ephemeral ECDSA key.
+    /// WARNING: The signing key is generated per-call and discarded. The embedded public key
+    /// can verify the receipt was not tampered with, but cannot prove who signed it.
+    /// For production use, prefer the overload that accepts an external <see cref="ECDsa"/> key.
+    /// </summary>
     public GovernanceReceiptBundle ExportProof(string auditFilePath, int fromLine, int toLine, string policyBundleHash, string policySignatureInfo)
     {
         var events = LoadEvents(auditFilePath, fromLine, toLine);
@@ -56,6 +62,62 @@ public sealed class GovernanceReceiptService
         };
 
         Sign(bundle);
+        return bundle;
+    }
+
+    /// <summary>
+    /// Exports a governance receipt bundle signed with the provided external ECDSA key.
+    /// Use this overload for production scenarios where key management is required.
+    /// </summary>
+    public GovernanceReceiptBundle ExportProof(string auditFilePath, int fromLine, int toLine, string policyBundleHash, string policySignatureInfo, ECDsa externalKey)
+    {
+        var events = LoadEvents(auditFilePath, fromLine, toLine);
+        if (events.Count == 0)
+        {
+            throw new InvalidOperationException("No audit events in selected range.");
+        }
+
+        var bundle = new GovernanceReceiptBundle
+        {
+            GeneratedAtUtc = DateTimeOffset.UtcNow,
+            RequestSummary = BuildRequestSummary(events),
+            PolicyBundleHash = policyBundleHash,
+            PolicySignatureInfo = policySignatureInfo,
+            AuditFirstPrevHash = events.First().Event.PrevHash,
+            AuditLastEntryHash = events.Last().Event.EntryHash,
+            LeaseReceiptHashes = events.Where(e => e.Event.EventType == "lease_released")
+                .Select(e => e.Event.EntryHash)
+                .Distinct(StringComparer.Ordinal)
+                .ToList(),
+            ApprovalReviewers = events
+                .Where(e => e.Event.EventType == "approval_reviewed")
+                .Select(e => e.Event.ActorId)
+                .Where(a => !string.IsNullOrWhiteSpace(a))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            ModelUsageTotals = events
+                .Where(e => !string.IsNullOrWhiteSpace(e.Event.ModelId))
+                .GroupBy(e => e.Event.ModelId, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase),
+            ToolUsageTotals = events
+                .SelectMany(e => e.Event.RequestedTools)
+                .Select(tool => tool.Split(':')[0])
+                .Where(tool => !string.IsNullOrWhiteSpace(tool))
+                .GroupBy(tool => tool, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase),
+            Anchors = events.Select(e => new ReceiptAuditAnchor
+            {
+                LineNumber = e.Line,
+                EventType = e.Event.EventType,
+                PolicyHash = e.Event.PolicyHash,
+                PrevHash = e.Event.PrevHash,
+                EntryHash = e.Event.EntryHash,
+                LeaseId = e.Event.LeaseId,
+                RequestedTools = e.Event.RequestedTools.ToList()
+            }).ToList()
+        };
+
+        Sign(bundle, externalKey);
         return bundle;
     }
 
@@ -135,6 +197,11 @@ public sealed class GovernanceReceiptService
     private static void Sign(GovernanceReceiptBundle bundle)
     {
         using var ecdsa = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        Sign(bundle, ecdsa);
+    }
+
+    private static void Sign(GovernanceReceiptBundle bundle, ECDsa ecdsa)
+    {
         bundle.PublicKeyBase64 = Convert.ToBase64String(ecdsa.ExportSubjectPublicKeyInfo());
         var payload = ReceiptPayload(bundle);
         var signature = ecdsa.SignData(payload, HashAlgorithmName.SHA256);

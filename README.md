@@ -1,10 +1,14 @@
 # LeaseGate
 
+[![Build](https://github.com/mcp-tool-shop-org/LeaseGate/actions/workflows/policy-ci.yml/badge.svg)](https://github.com/mcp-tool-shop-org/LeaseGate/actions)
+[![Version](https://img.shields.io/badge/version-v0.1.0-blue)](https://github.com/mcp-tool-shop-org/LeaseGate/releases/tag/v0.1.0)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
 LeaseGate is a local-first AI governance control plane that issues execution leases, enforces policy and budgets, and produces tamper-evident governance evidence.
 
-## Current Status
+## Current Status — v0.1.0
 
-Phases 1-5 are implemented and tested, including:
+Phases 1-5 are implemented, tested, and security-hardened, including:
 
 - Lease admission and TTL-based release safety
 - Multi-pool governance (concurrency, rate, context, compute, spend)
@@ -19,6 +23,20 @@ Phases 1-5 are implemented and tested, including:
 - Context governance with governed summarization traces
 - Safety automation (cooldown, clamp, circuit-breaker)
 - Governance proof export and verification
+
+### v0.1.0 Security Hardening
+
+- Command injection prevention in tool isolation (shell metacharacter blocklist + direct execution)
+- Service account token hashing (SHA-256 with plaintext backward compatibility)
+- Resilient audit writes with failure tracking (no more silent fire-and-forget)
+- Payload size limits on pipe message framing (16 MB cap)
+- Thread-safe registries and client state (ConcurrentDictionary throughout)
+- Concurrent named pipe connections (dispatch without blocking listener)
+- Path traversal protection on all export endpoints
+- CSV formula injection prevention in report exports
+- Unbounded growth caps on safety automation state
+- Policy reload error tracking and exposure
+- External key support for governance receipt signing
 
 ## Solution Layout
 
@@ -106,3 +124,4 @@ CI validation and bundle signing are provided by:
 - [docs/Development.md](docs/Development.md)
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [CHANGELOG.md](CHANGELOG.md)
+- [SECURITY.md](SECURITY.md)

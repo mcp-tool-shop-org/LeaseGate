@@ -46,12 +46,18 @@ Current suites cover:
 - intent routing, fallback planning, context governance
 - runaway suppression and diagnostics/report exports
 - governance receipt export and verification
+- command injection rejection (shell metacharacters)
+- payload size enforcement (16 MB cap)
+- path traversal rejection on export endpoints
+- CSV formula injection prevention
+- service account token hash comparison
 
 When adding features:
 
 - add tests for new deny/recommendation branches
 - include upgrade-safe serialization tests for changed DTOs
 - add negative-path tests for policy and signature validation
+- add security boundary tests (injection, traversal, size limits) when touching isolation/export/framing
 
 ## Local workflow
 

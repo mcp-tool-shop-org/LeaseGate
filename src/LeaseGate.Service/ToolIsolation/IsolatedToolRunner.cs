@@ -5,6 +5,8 @@ namespace LeaseGate.Service.ToolIsolation;
 
 public sealed class IsolatedToolRunner
 {
+    private static readonly char[] BlockedMetacharacters = ['&', '|', '>', '<', ';', '`', '$', '(', ')', '{', '}', '%', '^', '!'];
+
     public async Task<ToolExecutionResponse> ExecuteAsync(ToolExecutionRequest request, ToolSubLeaseRecord subLease, LeaseGate.Policy.LeaseGatePolicy policy, CancellationToken cancellationToken)
     {
         if (!IsPathAllowed(request.TargetPath, policy.AllowedFileRoots))
@@ -17,15 +19,22 @@ public sealed class IsolatedToolRunner
             return Denied(request, "tool_host_not_allowed", "use an allowed network host");
         }
 
+        if (!ValidateCommandText(request.CommandText))
+        {
+            return Denied(request, "tool_command_rejected", "command contains blocked shell metacharacters");
+        }
+
         var effectiveTimeout = Math.Min(Math.Max(100, request.TimeoutMs), Math.Max(100, subLease.TimeoutMs));
         var effectiveMaxBytes = Math.Min(Math.Max(256, request.MaxOutputBytes), Math.Max(256, subLease.MaxOutputBytes));
+
+        var (fileName, arguments) = ParseCommand(request.CommandText);
 
         var start = Stopwatch.StartNew();
         using var process = new Process();
         process.StartInfo = new ProcessStartInfo
         {
-            FileName = "cmd.exe",
-            Arguments = "/c " + (string.IsNullOrWhiteSpace(request.CommandText) ? "echo tool-exec" : request.CommandText),
+            FileName = fileName,
+            Arguments = arguments,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -99,6 +108,28 @@ public sealed class IsolatedToolRunner
         }
 
         return allowlist.Any(allowed => host.Equals(allowed, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool ValidateCommandText(string commandText)
+    {
+        if (string.IsNullOrWhiteSpace(commandText))
+        {
+            return false;
+        }
+
+        return commandText.IndexOfAny(BlockedMetacharacters) < 0;
+    }
+
+    private static (string FileName, string Arguments) ParseCommand(string commandText)
+    {
+        var trimmed = commandText.Trim();
+        var spaceIndex = trimmed.IndexOf(' ');
+        if (spaceIndex < 0)
+        {
+            return (trimmed, string.Empty);
+        }
+
+        return (trimmed[..spaceIndex], trimmed[(spaceIndex + 1)..]);
     }
 
     private static ToolExecutionResponse Denied(ToolExecutionRequest request, string reason, string recommendation)

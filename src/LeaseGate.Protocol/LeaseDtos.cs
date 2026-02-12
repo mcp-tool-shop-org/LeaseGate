@@ -311,6 +311,7 @@ public sealed class MetricsSnapshot
     public double RatePoolUtilization { get; set; }
     public double ContextPoolUtilization { get; set; }
     public double ComputePoolUtilization { get; set; }
+    public long FailedAuditWrites { get; set; }
     public Dictionary<string, long> GrantsByReason { get; set; } = new();
     public Dictionary<string, long> DeniesByReason { get; set; } = new();
 }

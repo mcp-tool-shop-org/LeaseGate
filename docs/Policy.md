@@ -46,6 +46,8 @@ The composed policy maps to `LeaseGatePolicy` and is loaded by `PolicyGitOpsLoad
 ### Identity and approvals
 
 - `serviceAccounts[]` with scoped token/org/workspace/role/capability/model/tool controls
+  - Prefer `TokenHash` (SHA-256) over plaintext `Token` — use `ServiceAccountPolicy.HashToken()` to generate
+  - Plaintext `Token` is supported for backward compatibility but should be migrated
 - `deniedToolCategories`
 - `approvalRequiredToolCategories`
 - `approvalReviewersByToolCategory`

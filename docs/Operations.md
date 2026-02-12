@@ -20,7 +20,7 @@ dotnet run --project samples/LeaseGate.SampleCli -- verify-receipt
 
 Use client/governor commands for runtime checks:
 
-- `GetMetrics`: active leases, spend, pool utilization, grant/deny distributions
+- `GetMetrics`: active leases, spend, pool utilization, grant/deny distributions, failed audit write count
 - `GetStatus`: health, uptime, durable-state info, policy version/hash
 - `ExportDiagnostics`: status + metrics + effective runtime snapshot
 - `ExportRunawayReport`: runaway/safety incident summary
@@ -83,12 +83,14 @@ Safety automation reacts to repeated failures or policy-deny bursts by issuing r
 
 ## Routine operator checks
 
-1. Confirm named pipe bind and process health.
+1. Confirm named pipe bind and process health (server supports concurrent connections).
 2. Check `GetStatus` for policy version/hash and durable-state health.
 3. Review deny distribution drift in `GetMetrics`.
 4. Export diagnostics during incidents.
 5. Review daily report spend/alerts.
 6. Verify receipt proofs for sampled high-risk actions.
+7. Monitor `FailedAuditWrites` in metrics for audit subsystem health.
+8. Confirm export paths are constrained to temp/app data directories (path traversal is rejected).
 
 ## Incident playbook
 

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using LeaseGate.Protocol;
 
 namespace LeaseGate.Service.Tools;
@@ -12,12 +13,13 @@ public sealed class ToolDefinition
 
 public sealed class ToolRegistry
 {
-    private readonly Dictionary<string, ToolDefinition> _tools;
+    private readonly ConcurrentDictionary<string, ToolDefinition> _tools;
 
     public ToolRegistry(IEnumerable<ToolDefinition>? seed = null)
     {
-        _tools = (seed ?? Array.Empty<ToolDefinition>())
-            .ToDictionary(t => t.ToolId, StringComparer.OrdinalIgnoreCase);
+        _tools = new ConcurrentDictionary<string, ToolDefinition>(
+            (seed ?? Array.Empty<ToolDefinition>()).Select(t => new KeyValuePair<string, ToolDefinition>(t.ToolId, t)),
+            StringComparer.OrdinalIgnoreCase);
     }
 
     public bool TryGet(string toolId, out ToolDefinition? definition)

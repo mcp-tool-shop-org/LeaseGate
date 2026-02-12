@@ -33,6 +33,7 @@ public sealed class LeaseGovernor : IDisposable
     private readonly Timer _expiryTimer;
     private readonly ILeaseGateStateStore? _stateStore;
     private readonly DateTimeOffset _startedAtUtc = DateTimeOffset.UtcNow;
+    private long _failedAuditCount;
     private double _lastContextUtilization;
 
     public LeaseGovernor(LeaseGovernorOptions options, IPolicyEngine policy, IAuditWriter audit, ToolRegistry? toolRegistry = null)
@@ -66,7 +67,7 @@ public sealed class LeaseGovernor : IDisposable
 
         var response = _approvals.Create(request, requiredReviewers);
         PersistApprovals();
-        _ = _audit.WriteAsync(new AuditEvent
+        AuditFireAndForget(new AuditEvent
         {
             EventType = "approval_requested",
             TimestampUtc = DateTimeOffset.UtcNow,
@@ -82,7 +83,7 @@ public sealed class LeaseGovernor : IDisposable
             ModelId = string.Empty,
             Decision = "pending",
             Recommendation = $"required_reviewers={response.RequiredReviewers}"
-        }, CancellationToken.None);
+        });
         return response;
     }
 
@@ -90,7 +91,7 @@ public sealed class LeaseGovernor : IDisposable
     {
         var response = _approvals.Grant(request);
         PersistApprovals();
-        _ = _audit.WriteAsync(new AuditEvent
+        AuditFireAndForget(new AuditEvent
         {
             EventType = "approval_reviewed",
             TimestampUtc = DateTimeOffset.UtcNow,
@@ -106,7 +107,7 @@ public sealed class LeaseGovernor : IDisposable
             ModelId = string.Empty,
             Decision = response.Granted ? "granted" : "pending",
             Recommendation = response.Message
-        }, CancellationToken.None);
+        });
         return response;
     }
 
@@ -114,7 +115,7 @@ public sealed class LeaseGovernor : IDisposable
     {
         var response = _approvals.Deny(request);
         PersistApprovals();
-        _ = _audit.WriteAsync(new AuditEvent
+        AuditFireAndForget(new AuditEvent
         {
             EventType = "approval_reviewed",
             TimestampUtc = DateTimeOffset.UtcNow,
@@ -130,7 +131,7 @@ public sealed class LeaseGovernor : IDisposable
             ModelId = string.Empty,
             Decision = response.Denied ? "denied" : "not_found",
             Recommendation = response.Message
-        }, CancellationToken.None);
+        });
         return response;
     }
 
@@ -143,7 +144,7 @@ public sealed class LeaseGovernor : IDisposable
     {
         var response = _approvals.Review(request);
         PersistApprovals();
-        _ = _audit.WriteAsync(new AuditEvent
+        AuditFireAndForget(new AuditEvent
         {
             EventType = "approval_reviewed",
             TimestampUtc = DateTimeOffset.UtcNow,
@@ -159,7 +160,7 @@ public sealed class LeaseGovernor : IDisposable
             ModelId = string.Empty,
             Decision = response.Status.ToString(),
             Recommendation = response.Message
-        }, CancellationToken.None);
+        });
         return response;
     }
 
@@ -172,6 +173,7 @@ public sealed class LeaseGovernor : IDisposable
             RatePoolUtilization = _rate.Utilization,
             ContextPoolUtilization = _lastContextUtilization,
             ComputePoolUtilization = _compute.Utilization,
+            FailedAuditWrites = Interlocked.Read(ref _failedAuditCount),
             GrantsByReason = _metrics.SnapshotGrants(),
             DeniesByReason = _metrics.SnapshotDenies()
         };
@@ -204,6 +206,8 @@ public sealed class LeaseGovernor : IDisposable
             var outputPath = string.IsNullOrWhiteSpace(request.OutputPath)
                 ? Path.Combine(Path.GetTempPath(), $"leasegate-diagnostics-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}.json")
                 : request.OutputPath;
+
+            ValidateOutputPath(outputPath);
 
             var directory = Path.GetDirectoryName(outputPath);
             if (!string.IsNullOrWhiteSpace(directory))
@@ -541,115 +545,27 @@ public sealed class LeaseGovernor : IDisposable
 
         if (!_context.TryEvaluate(request, out var contextReason, out var contextRecommendation))
         {
-            if (request.AutoApplyConstraints)
-            {
-                var constrained = BuildConstraints(request);
-                constrained.MaxOutputTokensOverride = Math.Max(32, request.MaxOutputTokens / 2);
-                constrained.CooldownMs = 250;
-                var summaries = BuildContextSummaries(request);
-
-                if (!_budget.TryReserve(1, out _))
+            var result = await TryAutoSummarize(request, contextReason, contextRecommendation,
+                "context_auto_compression_applied", "context_prompt_tokens_exceeded", 200, cancellationToken,
+                constrained =>
                 {
-                    _compute.Release(request.EstimatedComputeUnits);
-                    _concurrency.Release();
-                    var summaryDenied = Denied(request, "summarization_budget_unavailable", 500, "insufficient budget to run governed summarization");
-                    summaryDenied.FallbackPlan = BuildFallbackPlan(request, summaryDenied.DeniedReason, summaryDenied.RetryAfterMs);
-                    await AuditDeniedAsync(request, summaryDenied, cancellationToken);
-                    _metrics.RecordDeny("summarization_budget_unavailable");
-                    return summaryDenied;
-                }
-
-                var autoLease = CreateLease(request, constrained, contextSummaries: summaries);
-                _leases.Add(autoLease);
-                PersistLease(autoLease);
-                PersistBudgetAndRate();
-                PersistPolicyState();
-
-                await _audit.WriteAsync(new AuditEvent
-                {
-                    EventType = "context_summarization_required",
-                    TimestampUtc = DateTimeOffset.UtcNow,
-                    ProtocolVersion = ProtocolVersionInfo.ProtocolVersion,
-                    PolicyHash = _policy.CurrentSnapshot.PolicyHash,
-                    LeaseId = autoLease.LeaseId,
-                    OrgId = request.OrgId,
-                    ActorId = request.ActorId,
-                    WorkspaceId = request.WorkspaceId,
-                    PrincipalType = request.PrincipalType,
-                    Role = request.Role,
-                    ActionType = request.ActionType.ToString(),
-                    ModelId = request.ModelId,
-                    Decision = "auto_summarized",
-                    Recommendation = string.Join(";", summaries.Select(s => $"{s.SourceId}:{s.OriginalTokens}->{s.SummarizedTokens}"))
-                }, cancellationToken);
-
-                return GrantedWithPlan(request, autoLease, "context_auto_compression_applied", BuildFallbackPlan(request, "context_prompt_tokens_exceeded", 250));
-            }
-
-            _compute.Release(request.EstimatedComputeUnits);
-            _concurrency.Release();
-            var denied = Denied(request, contextReason, 200, contextRecommendation);
-            denied.FallbackPlan = BuildFallbackPlan(request, denied.DeniedReason, denied.RetryAfterMs);
-            await AuditDeniedAsync(request, denied, cancellationToken);
-            _metrics.RecordDeny(contextReason);
-            return denied;
+                    constrained.MaxOutputTokensOverride = Math.Max(32, request.MaxOutputTokens / 2);
+                    constrained.CooldownMs = 250;
+                });
+            if (result is not null) return result;
         }
         _lastContextUtilization = _context.Utilization(request);
 
         if (!ValidateRetrievalBudgets(request, out var retrievalReason, out var retrievalRecommendation))
         {
-            if (request.AutoApplyConstraints)
-            {
-                var constrained = BuildConstraints(request);
-                constrained.CooldownMs = 250;
-                constrained.MaxContextTokens = Math.Min(_options.MaxContextTokens, _policy.CurrentSnapshot.Policy.SummarizationTargetTokens);
-                var summaries = BuildContextSummaries(request);
-
-                if (!_budget.TryReserve(1, out _))
+            var result = await TryAutoSummarize(request, retrievalReason, retrievalRecommendation,
+                "retrieval_auto_compression_applied", retrievalReason, 250, cancellationToken,
+                constrained =>
                 {
-                    _compute.Release(request.EstimatedComputeUnits);
-                    _concurrency.Release();
-                    var summaryDenied = Denied(request, "summarization_budget_unavailable", 500, "insufficient budget to run governed summarization");
-                    summaryDenied.FallbackPlan = BuildFallbackPlan(request, summaryDenied.DeniedReason, summaryDenied.RetryAfterMs);
-                    await AuditDeniedAsync(request, summaryDenied, cancellationToken);
-                    _metrics.RecordDeny("summarization_budget_unavailable");
-                    return summaryDenied;
-                }
-
-                var autoLease = CreateLease(request, constrained, contextSummaries: summaries);
-                _leases.Add(autoLease);
-                PersistLease(autoLease);
-                PersistBudgetAndRate();
-                PersistPolicyState();
-
-                await _audit.WriteAsync(new AuditEvent
-                {
-                    EventType = "context_summarization_required",
-                    TimestampUtc = DateTimeOffset.UtcNow,
-                    ProtocolVersion = ProtocolVersionInfo.ProtocolVersion,
-                    PolicyHash = _policy.CurrentSnapshot.PolicyHash,
-                    LeaseId = autoLease.LeaseId,
-                    OrgId = request.OrgId,
-                    ActorId = request.ActorId,
-                    WorkspaceId = request.WorkspaceId,
-                    PrincipalType = request.PrincipalType,
-                    Role = request.Role,
-                    ActionType = request.ActionType.ToString(),
-                    ModelId = request.ModelId,
-                    Decision = "auto_summarized",
-                    Recommendation = string.Join(";", summaries.Select(s => $"{s.SourceId}:{s.OriginalTokens}->{s.SummarizedTokens}"))
-                }, cancellationToken);
-
-                return GrantedWithPlan(request, autoLease, "retrieval_auto_compression_applied", BuildFallbackPlan(request, retrievalReason, 250));
-            }
-
-            _compute.Release(request.EstimatedComputeUnits);
-            _concurrency.Release();
-            var denied = Denied(request, retrievalReason, 250, retrievalRecommendation);
-            denied.FallbackPlan = BuildFallbackPlan(request, denied.DeniedReason, denied.RetryAfterMs);
-            await AuditDeniedAsync(request, denied, cancellationToken);
-            _metrics.RecordDeny(retrievalReason);
-            return denied;
+                    constrained.CooldownMs = 250;
+                    constrained.MaxContextTokens = Math.Min(_options.MaxContextTokens, _policy.CurrentSnapshot.Policy.SummarizationTargetTokens);
+                });
+            if (result is not null) return result;
         }
 
         if (!_budget.TryReserve(request.EstimatedCostCents, out var budgetRetryMs))
@@ -842,6 +758,69 @@ public sealed class LeaseGovernor : IDisposable
         return true;
     }
 
+    private async Task<AcquireLeaseResponse?> TryAutoSummarize(
+        AcquireLeaseRequest request,
+        string denyReason,
+        string denyRecommendation,
+        string grantRecommendation,
+        string fallbackReason,
+        int denyRetryMs,
+        CancellationToken cancellationToken,
+        Action<LeaseConstraints> configureConstraints)
+    {
+        if (request.AutoApplyConstraints)
+        {
+            var constrained = BuildConstraints(request);
+            configureConstraints(constrained);
+            var summaries = BuildContextSummaries(request);
+
+            if (!_budget.TryReserve(1, out _))
+            {
+                _compute.Release(request.EstimatedComputeUnits);
+                _concurrency.Release();
+                var summaryDenied = Denied(request, "summarization_budget_unavailable", 500, "insufficient budget to run governed summarization");
+                summaryDenied.FallbackPlan = BuildFallbackPlan(request, summaryDenied.DeniedReason, summaryDenied.RetryAfterMs);
+                await AuditDeniedAsync(request, summaryDenied, cancellationToken);
+                _metrics.RecordDeny("summarization_budget_unavailable");
+                return summaryDenied;
+            }
+
+            var autoLease = CreateLease(request, constrained, contextSummaries: summaries);
+            _leases.Add(autoLease);
+            PersistLease(autoLease);
+            PersistBudgetAndRate();
+            PersistPolicyState();
+
+            await _audit.WriteAsync(new AuditEvent
+            {
+                EventType = "context_summarization_required",
+                TimestampUtc = DateTimeOffset.UtcNow,
+                ProtocolVersion = ProtocolVersionInfo.ProtocolVersion,
+                PolicyHash = _policy.CurrentSnapshot.PolicyHash,
+                LeaseId = autoLease.LeaseId,
+                OrgId = request.OrgId,
+                ActorId = request.ActorId,
+                WorkspaceId = request.WorkspaceId,
+                PrincipalType = request.PrincipalType,
+                Role = request.Role,
+                ActionType = request.ActionType.ToString(),
+                ModelId = request.ModelId,
+                Decision = "auto_summarized",
+                Recommendation = string.Join(";", summaries.Select(s => $"{s.SourceId}:{s.OriginalTokens}->{s.SummarizedTokens}"))
+            }, cancellationToken);
+
+            return GrantedWithPlan(request, autoLease, grantRecommendation, BuildFallbackPlan(request, fallbackReason, 250));
+        }
+
+        _compute.Release(request.EstimatedComputeUnits);
+        _concurrency.Release();
+        var denied = Denied(request, denyReason, denyRetryMs, denyRecommendation);
+        denied.FallbackPlan = BuildFallbackPlan(request, denied.DeniedReason, denied.RetryAfterMs);
+        await AuditDeniedAsync(request, denied, cancellationToken);
+        _metrics.RecordDeny(denyReason);
+        return denied;
+    }
+
     private List<ContextSummaryTrace> BuildContextSummaries(AcquireLeaseRequest request)
     {
         var targetTokens = Math.Max(64, _policy.CurrentSnapshot.Policy.SummarizationTargetTokens);
@@ -959,6 +938,8 @@ public sealed class LeaseGovernor : IDisposable
             var outputPath = string.IsNullOrWhiteSpace(request.OutputPath)
                 ? Path.Combine(Path.GetTempPath(), $"leasegate-runaway-report-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}.json")
                 : request.OutputPath;
+
+            ValidateOutputPath(outputPath);
 
             var directory = Path.GetDirectoryName(outputPath);
             if (!string.IsNullOrWhiteSpace(directory))
@@ -1177,7 +1158,7 @@ public sealed class LeaseGovernor : IDisposable
 
             if (persistedLease.ExpiresAtUtc <= now)
             {
-                _ = _audit.WriteAsync(new AuditEvent
+                AuditFireAndForget(new AuditEvent
                 {
                     EventType = "lease_expired_by_restart",
                     TimestampUtc = now,
@@ -1193,7 +1174,7 @@ public sealed class LeaseGovernor : IDisposable
                     ModelId = request.ModelId,
                     EstimatedCostCents = request.EstimatedCostCents,
                     Decision = "expired"
-                }, CancellationToken.None);
+                });
                 _stateStore.RemoveLease(persistedLease.LeaseId);
                 continue;
             }
@@ -1291,6 +1272,38 @@ public sealed class LeaseGovernor : IDisposable
             PolicyVersion = _policy.CurrentSnapshot.Policy.PolicyVersion,
             PolicyHash = _policy.CurrentSnapshot.PolicyHash
         });
+    }
+
+    private void AuditFireAndForget(AuditEvent auditEvent)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _audit.WriteAsync(auditEvent, CancellationToken.None);
+            }
+            catch
+            {
+                Interlocked.Increment(ref _failedAuditCount);
+            }
+        });
+    }
+
+    private static void ValidateOutputPath(string outputPath)
+    {
+        var fullPath = Path.GetFullPath(outputPath);
+        if (fullPath.Contains(".." + Path.DirectorySeparatorChar) || fullPath.Contains(".." + Path.AltDirectorySeparatorChar))
+        {
+            throw new InvalidOperationException("Output path must not contain directory traversal.");
+        }
+
+        var tempRoot = Path.GetFullPath(Path.GetTempPath());
+        var appDataRoot = Path.GetFullPath(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+        if (!fullPath.StartsWith(tempRoot, StringComparison.OrdinalIgnoreCase) &&
+            !fullPath.StartsWith(appDataRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Output path must be under temp or app data directories.");
+        }
     }
 
     private bool AuthorizePrincipal(AcquireLeaseRequest request, out string denyReason, out string recommendation)

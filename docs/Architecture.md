@@ -61,7 +61,7 @@ Release
 ### LeaseGate.Protocol
 
 - Shared wire DTOs and enums (protocol v0.1)
-- Length-prefixed framed messages for named pipe transport
+- Length-prefixed framed messages for named pipe transport (16 MB payload cap)
 - Stable JSON serialization via `ProtocolJson`
 
 ### LeaseGate.Service
@@ -72,7 +72,7 @@ Release
 - Tool sub-leases and guarded tool execution
 - Safety state machine and runaway suppression hooks
 - Diagnostics and report export surfaces
-- `NamedPipeGovernorServer`: command transport
+- `NamedPipeGovernorServer`: concurrent command transport (dispatched connections)
 
 ### LeaseGate.Policy
 
@@ -90,7 +90,8 @@ Release
 
 - Append-only JSONL audit writer
 - Hash-chain (`prevHash`, `entryHash`) for tamper evidence
-- Best-effort writes that do not crash governor paths
+- Streaming tail recovery (constant memory regardless of log size)
+- Failure tracking via `MetricsSnapshot.FailedAuditWrites` (not silently dropped)
 
 ### LeaseGate.Hub
 
@@ -104,7 +105,7 @@ Release
 
 ### LeaseGate.Receipt
 
-- Governance proof bundle generation
+- Governance proof bundle generation (ephemeral or external ECDSA key)
 - Signature and anchor verification against audit chain
 
 ### LeaseGate.Client / LeaseGate.Providers

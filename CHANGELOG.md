@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.1.0 - 2026-02-12
+
+First tagged release with security hardening across all phases.
+
+### Security
+
+- **Command injection fix**: `IsolatedToolRunner` no longer uses `cmd.exe /c`; shell metacharacters are blocked and commands execute directly via process FileName/Arguments
+- **Token hashing**: `ServiceAccountPolicy` now supports `TokenHash` (SHA-256) with backward-compatible plaintext fallback; `PolicyEngine.TryResolveServiceAccount` prefers hash comparison
+- **Pipe payload bounds**: `PipeMessageFraming.ReadAsync` enforces a 16 MB maximum payload size
+- **Path traversal protection**: `ExportDiagnostics`, `ExportRunawayReport`, and `ExportDailySummary` validate output paths are under temp or app data directories and reject `..` traversal
+- **CSV formula injection**: `HubControlPlane.ExportDailySummary` escapes CSV fields starting with `=`, `+`, `-`, `@`
+
+### Reliability
+
+- **Audit write resilience**: All fire-and-forget `_ = _audit.WriteAsync(...)` calls replaced with `AuditFireAndForget()` helper that catches failures and tracks count via `MetricsSnapshot.FailedAuditWrites`
+- **Semaphore race fix**: `JsonlAuditWriter` uses boolean `acquired` flag instead of racy `_gate.CurrentCount == 0` check
+- **Concurrent pipe connections**: `NamedPipeGovernorServer` dispatches connections via `Task.Run` instead of blocking the listen loop
+- **Policy reload error tracking**: `PolicyEngine.TryReload` now captures and exposes errors via `LastReloadError` property instead of swallowing silently
+
+### Thread Safety
+
+- **ToolRegistry**: `Dictionary` replaced with `ConcurrentDictionary`
+- **LeaseGateClient**: `HashSet<string>` replaced with `ConcurrentDictionary<string, byte>`
+
+### Resource Bounds
+
+- **SafetyAutomationState**: All internal dictionaries capped at 10K entries; interventions list capped at 1K with eviction
+- **HubControlPlane**: `_leaseRequests` map capped at 10K entries with oldest-first eviction
+- **JsonlAuditWriter.LoadTailState**: Replaced `File.ReadAllLines` with streaming `StreamReader` for constant memory usage
+
+### Improvements
+
+- **DRY refactor**: Duplicate auto-summarization blocks in `LeaseGovernor.AcquireAsync` extracted into `TryAutoSummarize()` helper
+- **Receipt signing**: `GovernanceReceiptService` now documents ephemeral key limitation and provides `ExportProof` overload accepting external `ECDsa` key
+- **MetricsSnapshot**: Added `FailedAuditWrites` field for audit health monitoring
+
 ## 0.5.0 - 2026-02-12
 
 Phase 5 autonomous governance and proof release.

@@ -46,7 +46,7 @@ public sealed class NamedPipeGovernorServer : IDisposable
     {
         while (!cancellationToken.IsCancellationRequested)
         {
-            using var server = new NamedPipeServerStream(
+            var server = new NamedPipeServerStream(
                 _pipeName,
                 PipeDirection.InOut,
                 NamedPipeServerStream.MaxAllowedServerInstances,
@@ -54,7 +54,14 @@ public sealed class NamedPipeGovernorServer : IDisposable
                 PipeOptions.Asynchronous);
 
             await server.WaitForConnectionAsync(cancellationToken);
-            await HandleConnectionAsync(server, cancellationToken);
+            var pipe = server;
+            _ = Task.Run(async () =>
+            {
+                using (pipe)
+                {
+                    await HandleConnectionAsync(pipe, CancellationToken.None);
+                }
+            }, CancellationToken.None);
         }
     }
 

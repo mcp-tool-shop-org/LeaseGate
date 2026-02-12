@@ -26,6 +26,7 @@ Core command set:
 
 - `ProtocolVersion`: `0.1` (from `ProtocolVersionInfo.ProtocolVersion`)
 - Commands are wrapped in `PipeCommandRequest` / `PipeCommandResponse`
+- Maximum payload size: 16 MB per message
 - Protocol version and policy metadata are propagated into audit events and responses
 
 ## AcquireLeaseRequest
@@ -113,7 +114,7 @@ These contracts enforce bounded calls, timeout ceilings, output-size ceilings, a
 
 ## Operational/reporting contracts
 
-- `MetricsSnapshot`
+- `MetricsSnapshot` (includes `FailedAuditWrites` counter)
 - `GovernorStatusResponse`
 - `ExportDiagnosticsRequest` / `ExportDiagnosticsResponse`
 - `ExportRunawayReportRequest` / `ExportRunawayReportResponse`

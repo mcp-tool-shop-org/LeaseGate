@@ -4,6 +4,7 @@ namespace LeaseGate.Protocol;
 
 public static class PipeMessageFraming
 {
+    private const int MaxPayloadBytes = 16 * 1024 * 1024; // 16 MB
     public static async Task WriteAsync<T>(Stream stream, T message, CancellationToken cancellationToken)
     {
         var payload = ProtocolJson.Serialize(message);
@@ -24,6 +25,11 @@ public static class PipeMessageFraming
         if (payloadLength <= 0)
         {
             throw new InvalidOperationException("Invalid payload length.");
+        }
+
+        if (payloadLength > MaxPayloadBytes)
+        {
+            throw new InvalidOperationException($"Payload length {payloadLength} exceeds maximum of {MaxPayloadBytes} bytes.");
         }
 
         var payloadBytes = new byte[payloadLength];

@@ -23,6 +23,8 @@ public sealed class PolicyEngine : IPolicyEngine, IDisposable
     private FileSystemWatcher? _watcher;
     private PolicySnapshot _snapshot;
     private PolicySnapshot? _stagedSnapshot;
+    private string? _lastReloadError;
+    private DateTimeOffset? _lastReloadErrorAtUtc;
 
     public PolicyEngine(string policyFilePath, bool hotReload = false, PolicyEngineOptions? options = null)
     {
@@ -53,6 +55,17 @@ public sealed class PolicyEngine : IPolicyEngine, IDisposable
             lock (_lock)
             {
                 return _snapshot;
+            }
+        }
+    }
+
+    public (string? Error, DateTimeOffset? ErrorAtUtc) LastReloadError
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return (_lastReloadError, _lastReloadErrorAtUtc);
             }
         }
     }
@@ -161,11 +174,15 @@ public sealed class PolicyEngine : IPolicyEngine, IDisposable
     public bool TryResolveServiceAccount(string token, string orgId, string workspaceId, out ServiceAccountPolicy? account)
     {
         var policy = CurrentSnapshot.Policy;
+        var incomingHash = ServiceAccountPolicy.HashToken(token);
+
         account = policy.ServiceAccounts.FirstOrDefault(sa =>
-            !string.IsNullOrWhiteSpace(sa.Token) &&
-            sa.Token.Equals(token, StringComparison.Ordinal) &&
             sa.OrgId.Equals(orgId, StringComparison.OrdinalIgnoreCase) &&
-            sa.WorkspaceId.Equals(workspaceId, StringComparison.OrdinalIgnoreCase));
+            sa.WorkspaceId.Equals(workspaceId, StringComparison.OrdinalIgnoreCase) &&
+            ((!string.IsNullOrWhiteSpace(sa.TokenHash) &&
+              sa.TokenHash.Equals(incomingHash, StringComparison.OrdinalIgnoreCase)) ||
+             (!string.IsNullOrWhiteSpace(sa.Token) &&
+              sa.Token.Equals(token, StringComparison.Ordinal))));
 
         return account is not null;
     }
@@ -275,10 +292,17 @@ public sealed class PolicyEngine : IPolicyEngine, IDisposable
             lock (_lock)
             {
                 _snapshot = loaded;
+                _lastReloadError = null;
+                _lastReloadErrorAtUtc = null;
             }
         }
-        catch
+        catch (Exception ex)
         {
+            lock (_lock)
+            {
+                _lastReloadError = ex.Message;
+                _lastReloadErrorAtUtc = DateTimeOffset.UtcNow;
+            }
         }
     }
 

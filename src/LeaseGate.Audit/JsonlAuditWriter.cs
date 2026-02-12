@@ -18,9 +18,11 @@ public sealed class JsonlAuditWriter : IAuditWriter
 
     public async Task<AuditWriteResult> WriteAsync(AuditEvent auditEvent, CancellationToken cancellationToken)
     {
+        var acquired = false;
         try
         {
             await _gate.WaitAsync(cancellationToken);
+            acquired = true;
             var filePath = Path.Combine(_directory, $"leasegate-audit-{DateTime.UtcNow:yyyy-MM-dd}.jsonl");
             auditEvent.PrevHash = _lastHash;
             auditEvent.EntryHash = AuditHashChain.ComputeEntryHash(auditEvent);
@@ -47,7 +49,7 @@ public sealed class JsonlAuditWriter : IAuditWriter
         }
         finally
         {
-            if (_gate.CurrentCount == 0)
+            if (acquired)
             {
                 _gate.Release();
             }
@@ -64,14 +66,25 @@ public sealed class JsonlAuditWriter : IAuditWriter
                 return;
             }
 
-            var lines = File.ReadAllLines(path);
-            _lineNumber = lines.LongLength;
-            if (_lineNumber == 0)
+            string? lastLine = null;
+            long count = 0;
+            using var reader = new StreamReader(path);
+            while (reader.ReadLine() is { } line)
+            {
+                if (!string.IsNullOrWhiteSpace(line))
+                {
+                    lastLine = line;
+                }
+                count++;
+            }
+
+            _lineNumber = count;
+            if (lastLine is null)
             {
                 return;
             }
 
-            var last = ProtocolJson.Deserialize<AuditEvent>(lines[^1]);
+            var last = ProtocolJson.Deserialize<AuditEvent>(lastLine);
             _lastHash = string.IsNullOrWhiteSpace(last.EntryHash) ? _lastHash : last.EntryHash;
         }
         catch

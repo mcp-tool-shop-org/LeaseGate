@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using LeaseGate.Protocol;
 
 namespace LeaseGate.Policy;
@@ -56,13 +58,21 @@ public sealed class LeaseGatePolicy
 public sealed class ServiceAccountPolicy
 {
     public string Name { get; set; } = string.Empty;
+    /// <summary>Plaintext token — only used for backward compatibility. Prefer <see cref="TokenHash"/>.</summary>
     public string Token { get; set; } = string.Empty;
+    /// <summary>SHA-256 hex hash of the token. Use <see cref="HashToken"/> to generate.</summary>
+    public string TokenHash { get; set; } = string.Empty;
     public string OrgId { get; set; } = string.Empty;
     public string WorkspaceId { get; set; } = string.Empty;
     public Role Role { get; set; } = Role.ServiceAccount;
     public List<string> AllowedCapabilities { get; set; } = new();
     public List<string> AllowedModels { get; set; } = new();
     public List<string> AllowedTools { get; set; } = new();
+
+    public static string HashToken(string plainToken)
+    {
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(plainToken))).ToLowerInvariant();
+    }
 }
 
 public sealed class PolicyDecision

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.IO.Pipes;
 using LeaseGate.Protocol;
 
@@ -6,7 +7,7 @@ namespace LeaseGate.Client;
 public sealed class LeaseGateClient
 {
     private readonly LeaseGateClientOptions _options;
-    private readonly HashSet<string> _localLeaseIds = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, byte> _localLeaseIds = new(StringComparer.Ordinal);
 
     public LeaseGateClient(LeaseGateClientOptions options)
     {
@@ -92,7 +93,7 @@ public sealed class LeaseGateClient
 
     public async Task<ReleaseLeaseResponse> ReleaseAsync(ReleaseLeaseRequest request, CancellationToken cancellationToken)
     {
-        if (_localLeaseIds.Remove(request.LeaseId))
+        if (_localLeaseIds.TryRemove(request.LeaseId, out _))
         {
             return new ReleaseLeaseResponse
             {
@@ -160,7 +161,7 @@ public sealed class LeaseGateClient
     private AcquireLeaseResponse GrantLocal(AcquireLeaseRequest request, string recommendation)
     {
         var leaseId = $"local-{Guid.NewGuid():N}";
-        _localLeaseIds.Add(leaseId);
+        _localLeaseIds.TryAdd(leaseId, 0);
 
         return new AcquireLeaseResponse
         {

@@ -13,6 +13,7 @@ public sealed class HubControlPlane : IDisposable
     private readonly IPolicyEngine _policy;
     private readonly DistributedQuotaManager _quotas = new();
     private readonly CostAttributionTracker _attribution = new();
+    private const int MaxLeaseRequestEntries = 10_000;
     private readonly Dictionary<string, AcquireLeaseRequest> _leaseRequests = new(StringComparer.Ordinal);
 
     public HubControlPlane(LeaseGovernorOptions options, string policyPath, IAuditWriter? auditWriter = null, ToolRegistry? tools = null)
@@ -49,6 +50,11 @@ public sealed class HubControlPlane : IDisposable
         if (response.Granted)
         {
             _leaseRequests[response.LeaseId] = request;
+            if (_leaseRequests.Count > MaxLeaseRequestEntries)
+            {
+                var oldest = _leaseRequests.Keys.First();
+                _leaseRequests.Remove(oldest);
+            }
         }
         else
         {
@@ -90,6 +96,8 @@ public sealed class HubControlPlane : IDisposable
                 ? Path.Combine(Path.GetTempPath(), $"leasegate-daily-report-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}.{request.Format}")
                 : request.OutputPath;
 
+            ValidateOutputPath(outputPath);
+
             var dir = Path.GetDirectoryName(outputPath);
             if (!string.IsNullOrWhiteSpace(dir))
             {
@@ -100,7 +108,7 @@ public sealed class HubControlPlane : IDisposable
             {
                 var lines = new List<string> { "orgId,workspaceId,actorId,modelId,toolId,spendCents,count" };
                 lines.AddRange(report.TopSpenders.Select(r =>
-                    $"{r.OrgId},{r.WorkspaceId},{r.ActorId},{r.ModelId},{r.ToolId},{r.SpendCents},{r.Count}"));
+                    $"{CsvEscape(r.OrgId)},{CsvEscape(r.WorkspaceId)},{CsvEscape(r.ActorId)},{CsvEscape(r.ModelId)},{CsvEscape(r.ToolId)},{r.SpendCents},{r.Count}"));
                 File.WriteAllLines(outputPath, lines, Encoding.UTF8);
             }
             else
@@ -169,6 +177,43 @@ public sealed class HubControlPlane : IDisposable
     public void Dispose()
     {
         _governor.Dispose();
+    }
+
+    private static void ValidateOutputPath(string outputPath)
+    {
+        var fullPath = Path.GetFullPath(outputPath);
+        if (fullPath.Contains(".." + Path.DirectorySeparatorChar) || fullPath.Contains(".." + Path.AltDirectorySeparatorChar))
+        {
+            throw new InvalidOperationException("Output path must not contain directory traversal.");
+        }
+
+        var tempRoot = Path.GetFullPath(Path.GetTempPath());
+        var appDataRoot = Path.GetFullPath(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+        if (!fullPath.StartsWith(tempRoot, StringComparison.OrdinalIgnoreCase) &&
+            !fullPath.StartsWith(appDataRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Output path must be under temp or app data directories.");
+        }
+    }
+
+    private static string CsvEscape(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+        {
+            return value;
+        }
+
+        if (value[0] is '=' or '+' or '-' or '@')
+        {
+            value = "'" + value;
+        }
+
+        if (value.Contains('"') || value.Contains(',') || value.Contains('\n'))
+        {
+            return "\"" + value.Replace("\"", "\"\"") + "\"";
+        }
+
+        return value;
     }
 
     private sealed class HubNoopAuditWriter : IAuditWriter

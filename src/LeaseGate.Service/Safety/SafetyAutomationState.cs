@@ -13,6 +13,9 @@ internal sealed class SafetyIntervention
 
 internal sealed class SafetyAutomationState
 {
+    private const int MaxMapEntries = 10_000;
+    private const int MaxInterventions = 1_000;
+
     private readonly object _lock = new();
     private readonly Dictionary<string, int> _policyDenyByWorkspace = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, int> _retryByIdempotency = new(StringComparer.OrdinalIgnoreCase);
@@ -68,7 +71,8 @@ internal sealed class SafetyAutomationState
         lock (_lock)
         {
             _retryByIdempotency[idempotencyKey] = _retryByIdempotency.GetValueOrDefault(idempotencyKey) + 1;
-            return _retryByIdempotency[idempotencyKey] >= threshold;
+            EvictIfNeeded(_retryByIdempotency);
+            return _retryByIdempotency.GetValueOrDefault(idempotencyKey) >= threshold;
         }
     }
 
@@ -77,7 +81,8 @@ internal sealed class SafetyAutomationState
         lock (_lock)
         {
             _policyDenyByWorkspace[workspaceId] = _policyDenyByWorkspace.GetValueOrDefault(workspaceId) + 1;
-            return _policyDenyByWorkspace[workspaceId] >= threshold;
+            EvictIfNeeded(_policyDenyByWorkspace);
+            return _policyDenyByWorkspace.GetValueOrDefault(workspaceId) >= threshold;
         }
     }
 
@@ -87,7 +92,8 @@ internal sealed class SafetyAutomationState
         {
             var key = $"{leaseId}|{toolId}";
             _toolLoopByLeaseTool[key] = _toolLoopByLeaseTool.GetValueOrDefault(key) + 1;
-            return _toolLoopByLeaseTool[key] >= threshold;
+            EvictIfNeeded(_toolLoopByLeaseTool);
+            return _toolLoopByLeaseTool.GetValueOrDefault(key) >= threshold;
         }
     }
 
@@ -97,6 +103,7 @@ internal sealed class SafetyAutomationState
         {
             var until = DateTimeOffset.UtcNow.Add(duration);
             _workspaceCircuitBreakerUntil[workspaceId] = until;
+            EvictIfNeeded(_workspaceCircuitBreakerUntil);
             _interventions.Add(new SafetyIntervention
             {
                 Trigger = trigger,
@@ -104,6 +111,7 @@ internal sealed class SafetyAutomationState
                 Action = "circuit_breaker",
                 Detail = detail
             });
+            TrimInterventions();
         }
     }
 
@@ -113,6 +121,7 @@ internal sealed class SafetyAutomationState
         {
             var until = DateTimeOffset.UtcNow.Add(duration);
             _actorCooldownUntil[actorId] = until;
+            EvictIfNeeded(_actorCooldownUntil);
             _interventions.Add(new SafetyIntervention
             {
                 Trigger = trigger,
@@ -120,6 +129,7 @@ internal sealed class SafetyAutomationState
                 Action = "cooldown",
                 Detail = detail
             });
+            TrimInterventions();
         }
     }
 
@@ -128,6 +138,7 @@ internal sealed class SafetyAutomationState
         lock (_lock)
         {
             _actorOutputClamp[actorId] = maxOutputTokens;
+            EvictIfNeeded(_actorOutputClamp);
             _interventions.Add(new SafetyIntervention
             {
                 Trigger = trigger,
@@ -135,6 +146,7 @@ internal sealed class SafetyAutomationState
                 Action = "clamp_max_output_tokens",
                 Detail = detail
             });
+            TrimInterventions();
         }
     }
 
@@ -150,6 +162,23 @@ internal sealed class SafetyAutomationState
                 Action = i.Action,
                 Detail = i.Detail
             }).ToList();
+        }
+    }
+
+    private static void EvictIfNeeded<TValue>(Dictionary<string, TValue> map)
+    {
+        while (map.Count > MaxMapEntries)
+        {
+            var first = map.Keys.First();
+            map.Remove(first);
+        }
+    }
+
+    private void TrimInterventions()
+    {
+        while (_interventions.Count > MaxInterventions)
+        {
+            _interventions.RemoveAt(0);
         }
     }
 }
