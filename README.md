@@ -83,6 +83,83 @@ Upgrading from Phase 1 to Phase 2:
 
 Full checklist: [CHANGELOG.md](CHANGELOG.md) under **0.2.0 → Integration Migration Checklist**.
 
+## Integration Snippet
+
+```csharp
+using LeaseGate.Client;
+using LeaseGate.Protocol;
+using LeaseGate.Providers;
+
+var client = new LeaseGateClient(new LeaseGateClientOptions
+{
+  PipeName = "leasegate-governor",
+  FallbackMode = FallbackMode.Prod
+});
+
+IModelProvider provider = new DeterministicFakeProviderAdapter();
+
+var spec = new ModelCallSpec
+{
+  ProviderId = "fake",
+  ModelId = "gpt-4o-mini",
+  Prompt = "Summarize this incident in 3 bullets.",
+  PromptTokens = 220,
+  MaxOutputTokens = 120,
+  Temperature = 0.2
+};
+
+var acquire = new AcquireLeaseRequest
+{
+  ActorId = "agent-1",
+  WorkspaceId = "ops",
+  ActionType = ActionType.ChatCompletion,
+  ModelId = spec.ModelId,
+  ProviderId = spec.ProviderId,
+  EstimatedPromptTokens = spec.PromptTokens,
+  MaxOutputTokens = spec.MaxOutputTokens,
+  RequestedContextTokens = 220,
+  RequestedRetrievedChunks = 4,
+  EstimatedToolOutputTokens = 0,
+  EstimatedComputeUnits = 1,
+  RequestedCapabilities = new() { "chat" },
+  RequestedTools = new(),
+  IdempotencyKey = Guid.NewGuid().ToString("N")
+};
+
+try
+{
+  var result = await GovernedModelCall.ExecuteProviderCallAsync(client, provider, spec, acquire, CancellationToken.None);
+  Console.WriteLine(result.OutputText);
+}
+catch (ApprovalRequiredException)
+{
+  var approval = await client.RequestApprovalAsync(new ApprovalRequest
+  {
+    ActorId = acquire.ActorId,
+    WorkspaceId = acquire.WorkspaceId,
+    Reason = "risky tool action required",
+    RequestedBy = "agent-1",
+    ToolCategory = ToolCategory.NetworkWrite,
+    SingleUse = true,
+    TtlSeconds = 300,
+    IdempotencyKey = Guid.NewGuid().ToString("N")
+  }, CancellationToken.None);
+
+  var grant = await client.GrantApprovalAsync(new GrantApprovalRequest
+  {
+    ApprovalId = approval.ApprovalId,
+    GrantedBy = "oncall-admin",
+    IdempotencyKey = Guid.NewGuid().ToString("N")
+  }, CancellationToken.None);
+
+  acquire.ApprovalToken = grant.ApprovalToken;
+  acquire.IdempotencyKey = Guid.NewGuid().ToString("N");
+
+  var retried = await GovernedModelCall.ExecuteProviderCallAsync(client, provider, spec, acquire, CancellationToken.None);
+  Console.WriteLine(retried.OutputText);
+}
+```
+
 ## Configuration
 
 Sample policy lives at:
