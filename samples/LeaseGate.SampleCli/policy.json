@@ -1,0 +1,28 @@
+{
+  "maxInFlight": 4,
+  "dailyBudgetCents": 120,
+  "allowedModels": [
+    "gpt-4o-mini",
+    "gpt-4.1-mini"
+  ],
+  "allowedCapabilities": {
+    "chatCompletion": [
+      "chat"
+    ],
+    "embedding": [
+      "embed"
+    ],
+    "toolCall": [
+      "read"
+    ],
+    "workflowStep": [
+      "read",
+      "chat"
+    ]
+  },
+  "riskRequiresApproval": [
+    "network_write",
+    "file_write",
+    "exec"
+  ]
+}
