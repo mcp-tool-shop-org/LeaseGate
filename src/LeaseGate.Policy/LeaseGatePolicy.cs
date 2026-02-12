@@ -1,0 +1,29 @@
+using LeaseGate.Protocol;
+
+namespace LeaseGate.Policy;
+
+public sealed class LeaseGatePolicy
+{
+    public int MaxInFlight { get; set; } = 4;
+    public int DailyBudgetCents { get; set; } = 500;
+    public List<string> AllowedModels { get; set; } = new();
+    public Dictionary<ActionType, List<string>> AllowedCapabilities { get; set; } = new();
+    public List<string> RiskRequiresApproval { get; set; } = new();
+}
+
+public sealed class PolicyDecision
+{
+    public bool Allowed { get; init; }
+    public string DeniedReason { get; init; } = string.Empty;
+    public string Recommendation { get; init; } = string.Empty;
+
+    public static PolicyDecision Allow() => new() { Allowed = true };
+
+    public static PolicyDecision Deny(string reason, string recommendation) =>
+        new()
+        {
+            Allowed = false,
+            DeniedReason = reason,
+            Recommendation = recommendation
+        };
+}
