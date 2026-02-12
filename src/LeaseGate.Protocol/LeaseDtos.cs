@@ -13,6 +13,8 @@ public sealed class AcquireLeaseRequest
     public ActionType ActionType { get; set; }
     public string ModelId { get; set; } = string.Empty;
     public string ProviderId { get; set; } = string.Empty;
+    public IntentClass IntentClass { get; set; } = IntentClass.Draft;
+    public bool AutoApplyConstraints { get; set; }
     public int EstimatedPromptTokens { get; set; }
     public int MaxOutputTokens { get; set; }
     public int EstimatedCostCents { get; set; }
@@ -44,6 +46,14 @@ public sealed class AcquireLeaseResponse
     public Role Role { get; set; } = Role.Member;
     public LeaseLocality LeaseLocality { get; set; } = LeaseLocality.LocalIssued;
     public bool DegradedMode { get; set; }
+    public List<FallbackPlanStep> FallbackPlan { get; set; } = new();
+}
+
+public sealed class FallbackPlanStep
+{
+    public int Rank { get; set; }
+    public string Action { get; set; } = string.Empty;
+    public string Detail { get; set; } = string.Empty;
 }
 
 public sealed class LeaseConstraints

@@ -74,3 +74,13 @@ public enum LeaseLocality
     LocalIssued,
     HubIssued
 }
+
+public enum IntentClass
+{
+    Draft,
+    Brainstorm,
+    Summarize,
+    Codegen,
+    HighAccuracy,
+    LongContext
+}

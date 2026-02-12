@@ -63,6 +63,22 @@ public sealed class PolicyEngine : IPolicyEngine, IDisposable
         var key = $"{request.ActorId}|{request.WorkspaceId}";
         var workspaceRoleKey = $"{request.WorkspaceId}|{request.Role}";
 
+        if (policy.IntentModelTiers.TryGetValue(request.IntentClass, out var intentModels) && intentModels.Count > 0)
+        {
+            if (!intentModels.Contains(request.ModelId, StringComparer.OrdinalIgnoreCase))
+            {
+                return PolicyDecision.Deny("intent_model_not_allowed", "select a model tier allowed for this intent");
+            }
+        }
+
+        if (policy.IntentMaxCostCents.TryGetValue(request.IntentClass, out var intentMaxCost) && intentMaxCost > 0)
+        {
+            if (request.EstimatedCostCents > intentMaxCost)
+            {
+                return PolicyDecision.Deny("intent_cost_exceeded", "reduce tokens or switch to a lower-cost intent/model tier");
+            }
+        }
+
         if (policy.AllowedModelsByWorkspace.TryGetValue(request.WorkspaceId, out var workspaceModels) &&
             workspaceModels.Count > 0 &&
             !workspaceModels.Contains(request.ModelId, StringComparer.OrdinalIgnoreCase))

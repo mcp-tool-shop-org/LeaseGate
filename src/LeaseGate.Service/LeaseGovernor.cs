@@ -467,6 +467,7 @@ public sealed class LeaseGovernor : IDisposable
             _compute.Release(request.EstimatedComputeUnits);
             _concurrency.Release();
             var denied = Denied(request, "rate_limit_reached", rateRetryMs, "backoff and retry with lower throughput");
+            denied.FallbackPlan = BuildFallbackPlan(request, denied.DeniedReason, denied.RetryAfterMs);
             await AuditDeniedAsync(request, denied, cancellationToken);
             _metrics.RecordDeny("rate_limit_reached");
             return denied;
@@ -474,9 +475,25 @@ public sealed class LeaseGovernor : IDisposable
 
         if (!_context.TryEvaluate(request, out var contextReason, out var contextRecommendation))
         {
+            if (request.AutoApplyConstraints)
+            {
+                var constrained = BuildConstraints(request);
+                constrained.MaxOutputTokensOverride = Math.Max(32, request.MaxOutputTokens / 2);
+                constrained.CooldownMs = 250;
+
+                var autoLease = CreateLease(request, constrained);
+                _leases.Add(autoLease);
+                PersistLease(autoLease);
+                PersistBudgetAndRate();
+                PersistPolicyState();
+
+                return GrantedWithPlan(request, autoLease, "context_auto_compression_applied", BuildFallbackPlan(request, "context_prompt_tokens_exceeded", 250));
+            }
+
             _compute.Release(request.EstimatedComputeUnits);
             _concurrency.Release();
             var denied = Denied(request, contextReason, 200, contextRecommendation);
+            denied.FallbackPlan = BuildFallbackPlan(request, denied.DeniedReason, denied.RetryAfterMs);
             await AuditDeniedAsync(request, denied, cancellationToken);
             _metrics.RecordDeny(contextReason);
             return denied;
@@ -485,9 +502,32 @@ public sealed class LeaseGovernor : IDisposable
 
         if (!_budget.TryReserve(request.EstimatedCostCents, out var budgetRetryMs))
         {
+            if (request.AutoApplyConstraints)
+            {
+                var constrained = BuildConstraints(request);
+                constrained.MaxOutputTokensOverride = Math.Max(32, request.MaxOutputTokens / 2);
+                if (_policy.CurrentSnapshot.Policy.IntentModelTiers.TryGetValue(request.IntentClass, out var tier) && tier.Count > 0)
+                {
+                    constrained.ForcedModelId = tier[0];
+                }
+
+                var reducedEstimatedCost = Math.Max(1, request.EstimatedCostCents / 2);
+                if (_budget.TryReserve(reducedEstimatedCost, out _))
+                {
+                    var autoLease = CreateLease(request, constrained);
+                    _leases.Add(autoLease);
+                    PersistLease(autoLease);
+                    PersistBudgetAndRate();
+                    PersistPolicyState();
+
+                    return GrantedWithPlan(request, autoLease, "budget_auto_downgrade_applied", BuildFallbackPlan(request, "daily_budget_exceeded", budgetRetryMs));
+                }
+            }
+
             _compute.Release(request.EstimatedComputeUnits);
             _concurrency.Release();
             var denied = Denied(request, "daily_budget_exceeded", budgetRetryMs, "switch model / reduce output tokens");
+            denied.FallbackPlan = BuildFallbackPlan(request, denied.DeniedReason, denied.RetryAfterMs);
             await AuditDeniedAsync(request, denied, cancellationToken);
             _metrics.RecordDeny("daily_budget_exceeded");
             return denied;
@@ -495,24 +535,7 @@ public sealed class LeaseGovernor : IDisposable
 
         var constraints = BuildConstraints(request);
 
-        var lease = new LeaseRecord
-        {
-            LeaseId = Guid.NewGuid().ToString("N"),
-            IdempotencyKey = request.IdempotencyKey,
-            Request = request,
-            Constraints = constraints,
-            ApprovalChain = approvalRecord?.Reviews.Select(r => new ApprovalDecisionTrace
-            {
-                ReviewerId = r.ReviewerId,
-                Decision = r.Decision,
-                ReviewedAtUtc = r.ReviewedAtUtc,
-                Comment = r.Comment,
-                Scope = r.Scope
-            }).ToList() ?? new List<ApprovalDecisionTrace>(),
-            ReservedComputeUnits = Math.Max(1, request.EstimatedComputeUnits),
-            AcquiredAtUtc = DateTimeOffset.UtcNow,
-            ExpiresAtUtc = DateTimeOffset.UtcNow.Add(_options.LeaseTtl)
-        };
+        var lease = CreateLease(request, constraints, approvalRecord);
         _leases.Add(lease);
         PersistLease(lease);
         PersistBudgetAndRate();
@@ -554,6 +577,82 @@ public sealed class LeaseGovernor : IDisposable
         _metrics.RecordGrant("granted");
 
         return response;
+    }
+
+    private LeaseRecord CreateLease(AcquireLeaseRequest request, LeaseConstraints constraints, ApprovalRecord? approvalRecord = null)
+    {
+        return new LeaseRecord
+        {
+            LeaseId = Guid.NewGuid().ToString("N"),
+            IdempotencyKey = request.IdempotencyKey,
+            Request = request,
+            Constraints = constraints,
+            ApprovalChain = approvalRecord?.Reviews.Select(r => new ApprovalDecisionTrace
+            {
+                ReviewerId = r.ReviewerId,
+                Decision = r.Decision,
+                ReviewedAtUtc = r.ReviewedAtUtc,
+                Comment = r.Comment,
+                Scope = r.Scope
+            }).ToList() ?? new List<ApprovalDecisionTrace>(),
+            ReservedComputeUnits = Math.Max(1, request.EstimatedComputeUnits),
+            AcquiredAtUtc = DateTimeOffset.UtcNow,
+            ExpiresAtUtc = DateTimeOffset.UtcNow.Add(_options.LeaseTtl)
+        };
+    }
+
+    private AcquireLeaseResponse GrantedWithPlan(AcquireLeaseRequest request, LeaseRecord lease, string recommendation, List<FallbackPlanStep> fallbackPlan)
+    {
+        return new AcquireLeaseResponse
+        {
+            Granted = true,
+            LeaseId = lease.LeaseId,
+            ExpiresAtUtc = lease.ExpiresAtUtc,
+            Constraints = lease.Constraints,
+            Recommendation = recommendation,
+            IdempotencyKey = request.IdempotencyKey,
+            PolicyVersion = _policy.CurrentSnapshot.Policy.PolicyVersion,
+            PolicyHash = _policy.CurrentSnapshot.PolicyHash,
+            OrgId = request.OrgId,
+            PrincipalType = request.PrincipalType,
+            Role = request.Role,
+            FallbackPlan = fallbackPlan
+        };
+    }
+
+    private List<FallbackPlanStep> BuildFallbackPlan(AcquireLeaseRequest request, string denyReason, int? retryAfterMs)
+    {
+        var cheapestModel = _policy.CurrentSnapshot.Policy.IntentModelTiers.TryGetValue(request.IntentClass, out var tier) && tier.Count > 0
+            ? tier[0]
+            : request.ModelId;
+
+        return new List<FallbackPlanStep>
+        {
+            new()
+            {
+                Rank = 1,
+                Action = "reduce_output_tokens",
+                Detail = $"set maxOutputTokens to {Math.Max(32, request.MaxOutputTokens / 2)}"
+            },
+            new()
+            {
+                Rank = 2,
+                Action = "compress_context",
+                Detail = "summarize context to fit retrieval/context token limits"
+            },
+            new()
+            {
+                Rank = 3,
+                Action = "switch_model",
+                Detail = $"use cheaper tier model: {cheapestModel}"
+            },
+            new()
+            {
+                Rank = 4,
+                Action = "delay_backoff",
+                Detail = retryAfterMs.HasValue ? $"retry after {retryAfterMs.Value}ms" : $"retry for {denyReason} with exponential backoff"
+            }
+        };
     }
 
     public async Task<ReleaseLeaseResponse> ReleaseAsync(ReleaseLeaseRequest request, CancellationToken cancellationToken)

@@ -25,6 +25,8 @@ public sealed class LeaseGatePolicy
     public int ActorMaxTokensPerMinute { get; set; } = 0;
     public int MaxInFlightPerActor { get; set; } = 0;
     public Dictionary<Role, int> RoleMaxInFlightOverrides { get; set; } = new();
+    public Dictionary<IntentClass, List<string>> IntentModelTiers { get; set; } = new();
+    public Dictionary<IntentClass, int> IntentMaxCostCents { get; set; } = new();
     public List<string> AllowedModels { get; set; } = new();
     public Dictionary<ActionType, List<string>> AllowedCapabilities { get; set; } = new();
     public Dictionary<Role, Dictionary<ActionType, List<string>>> AllowedCapabilitiesByRole { get; set; } = new();
