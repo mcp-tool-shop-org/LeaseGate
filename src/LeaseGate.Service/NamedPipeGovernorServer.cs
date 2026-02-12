@@ -89,6 +89,49 @@ public sealed class NamedPipeGovernorServer : IDisposable
                     };
                     break;
                 }
+                case "RequestApproval":
+                {
+                    var payload = ProtocolJson.Deserialize<ApprovalRequest>(request.PayloadJson);
+                    var result = _governor.RequestApproval(payload);
+                    response = new PipeCommandResponse
+                    {
+                        Success = true,
+                        PayloadJson = ProtocolJson.Serialize(result)
+                    };
+                    break;
+                }
+                case "GrantApproval":
+                {
+                    var payload = ProtocolJson.Deserialize<GrantApprovalRequest>(request.PayloadJson);
+                    var result = _governor.GrantApproval(payload);
+                    response = new PipeCommandResponse
+                    {
+                        Success = true,
+                        PayloadJson = ProtocolJson.Serialize(result)
+                    };
+                    break;
+                }
+                case "DenyApproval":
+                {
+                    var payload = ProtocolJson.Deserialize<DenyApprovalRequest>(request.PayloadJson);
+                    var result = _governor.DenyApproval(payload);
+                    response = new PipeCommandResponse
+                    {
+                        Success = true,
+                        PayloadJson = ProtocolJson.Serialize(result)
+                    };
+                    break;
+                }
+                case "GetMetrics":
+                {
+                    var result = _governor.GetMetricsSnapshot();
+                    response = new PipeCommandResponse
+                    {
+                        Success = true,
+                        PayloadJson = ProtocolJson.Serialize(result)
+                    };
+                    break;
+                }
                 default:
                     response = new PipeCommandResponse
                     {

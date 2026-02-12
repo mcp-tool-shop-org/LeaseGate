@@ -25,6 +25,26 @@ public sealed class LeaseGateClient
         }
     }
 
+    public Task<ApprovalRequestResponse> RequestApprovalAsync(ApprovalRequest request, CancellationToken cancellationToken)
+    {
+        return SendAsync<ApprovalRequest, ApprovalRequestResponse>("RequestApproval", request, cancellationToken);
+    }
+
+    public Task<GrantApprovalResponse> GrantApprovalAsync(GrantApprovalRequest request, CancellationToken cancellationToken)
+    {
+        return SendAsync<GrantApprovalRequest, GrantApprovalResponse>("GrantApproval", request, cancellationToken);
+    }
+
+    public Task<DenyApprovalResponse> DenyApprovalAsync(DenyApprovalRequest request, CancellationToken cancellationToken)
+    {
+        return SendAsync<DenyApprovalRequest, DenyApprovalResponse>("DenyApproval", request, cancellationToken);
+    }
+
+    public Task<MetricsSnapshot> GetMetricsAsync(CancellationToken cancellationToken)
+    {
+        return SendAsync<object, MetricsSnapshot>("GetMetrics", new { }, cancellationToken);
+    }
+
     public async Task<ReleaseLeaseResponse> ReleaseAsync(ReleaseLeaseRequest request, CancellationToken cancellationToken)
     {
         if (_localLeaseIds.Remove(request.LeaseId))
@@ -55,10 +75,13 @@ public sealed class LeaseGateClient
     private AcquireLeaseResponse ApplyFallbackAcquire(AcquireLeaseRequest request)
     {
         var hasRiskyCapability = request.RequestedCapabilities.Any(cap => _options.RiskyCapabilities.Contains(cap));
+        var hasRiskyTool = request.RequestedTools.Any(t =>
+            t.Category is ToolCategory.NetworkWrite or ToolCategory.FileWrite or ToolCategory.Exec);
+        var hasRisky = hasRiskyCapability || hasRiskyTool;
 
         if (_options.FallbackMode == FallbackMode.Dev)
         {
-            if (hasRiskyCapability)
+            if (hasRisky)
             {
                 return Denied(request, "service_unavailable_risky_capability", "disable risky capabilities in dev fallback");
             }
@@ -71,7 +94,7 @@ public sealed class LeaseGateClient
             return GrantLocal(request, "dev fallback grant");
         }
 
-        if (hasRiskyCapability)
+        if (hasRisky)
         {
             return Denied(request, "service_unavailable_prod_deny_risky", "retry when governor service is available");
         }
