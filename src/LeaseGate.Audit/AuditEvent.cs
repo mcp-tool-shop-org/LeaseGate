@@ -18,4 +18,6 @@ public sealed class AuditEvent
     public string Decision { get; set; } = string.Empty;
     public string Reason { get; set; } = string.Empty;
     public string Recommendation { get; set; } = string.Empty;
+    public string PrevHash { get; set; } = string.Empty;
+    public string EntryHash { get; set; } = string.Empty;
 }
