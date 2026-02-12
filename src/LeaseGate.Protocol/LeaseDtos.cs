@@ -158,6 +158,16 @@ public sealed class LeaseReceipt
     public LeaseOutcome Outcome { get; set; }
     public string AuditEntryHash { get; set; } = string.Empty;
     public DateTimeOffset TimestampUtc { get; set; }
+    public List<ApprovalDecisionTrace> ApprovalChain { get; set; } = new();
+}
+
+public sealed class ApprovalDecisionTrace
+{
+    public string ReviewerId { get; set; } = string.Empty;
+    public ApprovalDecisionStatus Decision { get; set; }
+    public DateTimeOffset ReviewedAtUtc { get; set; }
+    public string Comment { get; set; } = string.Empty;
+    public string Scope { get; set; } = string.Empty;
 }
 
 public sealed class ApprovalRequest
@@ -180,6 +190,8 @@ public sealed class ApprovalRequestResponse
     public DateTimeOffset ExpiresAtUtc { get; set; }
     public string Message { get; set; } = string.Empty;
     public string IdempotencyKey { get; set; } = string.Empty;
+    public int RequiredReviewers { get; set; } = 1;
+    public int CurrentApprovals { get; set; }
 }
 
 public sealed class GrantApprovalRequest
@@ -196,6 +208,8 @@ public sealed class GrantApprovalResponse
     public DateTimeOffset ExpiresAtUtc { get; set; }
     public string Message { get; set; } = string.Empty;
     public string IdempotencyKey { get; set; } = string.Empty;
+    public int RequiredReviewers { get; set; } = 1;
+    public int CurrentApprovals { get; set; }
 }
 
 public sealed class DenyApprovalRequest
@@ -209,6 +223,54 @@ public sealed class DenyApprovalResponse
 {
     public bool Denied { get; set; }
     public string Message { get; set; } = string.Empty;
+    public string IdempotencyKey { get; set; } = string.Empty;
+}
+
+public sealed class ApprovalQueueRequest
+{
+    public string WorkspaceId { get; set; } = string.Empty;
+    public string ToolId { get; set; } = string.Empty;
+    public ToolCategory? ToolCategory { get; set; }
+    public string RiskFlag { get; set; } = string.Empty;
+}
+
+public sealed class ApprovalQueueItem
+{
+    public string ApprovalId { get; set; } = string.Empty;
+    public string ActorId { get; set; } = string.Empty;
+    public string WorkspaceId { get; set; } = string.Empty;
+    public string Reason { get; set; } = string.Empty;
+    public string ToolId { get; set; } = string.Empty;
+    public ToolCategory? ToolCategory { get; set; }
+    public ApprovalDecisionStatus Status { get; set; }
+    public DateTimeOffset ExpiresAtUtc { get; set; }
+    public int RequiredReviewers { get; set; } = 1;
+    public int CurrentApprovals { get; set; }
+    public List<ApprovalDecisionTrace> Reviews { get; set; } = new();
+}
+
+public sealed class ApprovalQueueResponse
+{
+    public List<ApprovalQueueItem> Items { get; set; } = new();
+}
+
+public sealed class ReviewApprovalRequest
+{
+    public string ApprovalId { get; set; } = string.Empty;
+    public string ReviewerId { get; set; } = string.Empty;
+    public bool Approve { get; set; }
+    public string Comment { get; set; } = string.Empty;
+    public string IdempotencyKey { get; set; } = string.Empty;
+}
+
+public sealed class ReviewApprovalResponse
+{
+    public bool Accepted { get; set; }
+    public ApprovalDecisionStatus Status { get; set; }
+    public string ApprovalToken { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+    public int RequiredReviewers { get; set; } = 1;
+    public int CurrentApprovals { get; set; }
     public string IdempotencyKey { get; set; } = string.Empty;
 }
 

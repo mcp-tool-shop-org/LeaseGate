@@ -55,8 +55,32 @@ public sealed class LeaseGovernor : IDisposable
 
     public ApprovalRequestResponse RequestApproval(ApprovalRequest request)
     {
-        var response = _approvals.Create(request);
+        var requiredReviewers = 1;
+        if (request.ToolCategory.HasValue &&
+            _policy.CurrentSnapshot.Policy.ApprovalReviewersByToolCategory.TryGetValue(request.ToolCategory.Value, out var configuredReviewers))
+        {
+            requiredReviewers = Math.Max(1, configuredReviewers);
+        }
+
+        var response = _approvals.Create(request, requiredReviewers);
         PersistApprovals();
+        _ = _audit.WriteAsync(new AuditEvent
+        {
+            EventType = "approval_requested",
+            TimestampUtc = DateTimeOffset.UtcNow,
+            ProtocolVersion = ProtocolVersionInfo.ProtocolVersion,
+            PolicyHash = _policy.CurrentSnapshot.PolicyHash,
+            LeaseId = string.Empty,
+            OrgId = "approval",
+            ActorId = request.ActorId,
+            WorkspaceId = request.WorkspaceId,
+            PrincipalType = PrincipalType.Human,
+            Role = Role.Member,
+            ActionType = ActionType.WorkflowStep.ToString(),
+            ModelId = string.Empty,
+            Decision = "pending",
+            Recommendation = $"required_reviewers={response.RequiredReviewers}"
+        }, CancellationToken.None);
         return response;
     }
 
@@ -64,6 +88,23 @@ public sealed class LeaseGovernor : IDisposable
     {
         var response = _approvals.Grant(request);
         PersistApprovals();
+        _ = _audit.WriteAsync(new AuditEvent
+        {
+            EventType = "approval_reviewed",
+            TimestampUtc = DateTimeOffset.UtcNow,
+            ProtocolVersion = ProtocolVersionInfo.ProtocolVersion,
+            PolicyHash = _policy.CurrentSnapshot.PolicyHash,
+            LeaseId = string.Empty,
+            OrgId = "approval",
+            ActorId = request.GrantedBy,
+            WorkspaceId = "approval",
+            PrincipalType = PrincipalType.Human,
+            Role = Role.Admin,
+            ActionType = ActionType.WorkflowStep.ToString(),
+            ModelId = string.Empty,
+            Decision = response.Granted ? "granted" : "pending",
+            Recommendation = response.Message
+        }, CancellationToken.None);
         return response;
     }
 
@@ -71,6 +112,52 @@ public sealed class LeaseGovernor : IDisposable
     {
         var response = _approvals.Deny(request);
         PersistApprovals();
+        _ = _audit.WriteAsync(new AuditEvent
+        {
+            EventType = "approval_reviewed",
+            TimestampUtc = DateTimeOffset.UtcNow,
+            ProtocolVersion = ProtocolVersionInfo.ProtocolVersion,
+            PolicyHash = _policy.CurrentSnapshot.PolicyHash,
+            LeaseId = string.Empty,
+            OrgId = "approval",
+            ActorId = request.DeniedBy,
+            WorkspaceId = "approval",
+            PrincipalType = PrincipalType.Human,
+            Role = Role.Admin,
+            ActionType = ActionType.WorkflowStep.ToString(),
+            ModelId = string.Empty,
+            Decision = response.Denied ? "denied" : "not_found",
+            Recommendation = response.Message
+        }, CancellationToken.None);
+        return response;
+    }
+
+    public ApprovalQueueResponse ListPendingApprovals(ApprovalQueueRequest request)
+    {
+        return _approvals.ListPending(request);
+    }
+
+    public ReviewApprovalResponse ReviewApproval(ReviewApprovalRequest request)
+    {
+        var response = _approvals.Review(request);
+        PersistApprovals();
+        _ = _audit.WriteAsync(new AuditEvent
+        {
+            EventType = "approval_reviewed",
+            TimestampUtc = DateTimeOffset.UtcNow,
+            ProtocolVersion = ProtocolVersionInfo.ProtocolVersion,
+            PolicyHash = _policy.CurrentSnapshot.PolicyHash,
+            LeaseId = string.Empty,
+            OrgId = "approval",
+            ActorId = request.ReviewerId,
+            WorkspaceId = "approval",
+            PrincipalType = PrincipalType.Human,
+            Role = Role.Admin,
+            ActionType = ActionType.WorkflowStep.ToString(),
+            ModelId = string.Empty,
+            Decision = response.Status.ToString(),
+            Recommendation = response.Message
+        }, CancellationToken.None);
         return response;
     }
 
@@ -344,7 +431,8 @@ public sealed class LeaseGovernor : IDisposable
             return denied;
         }
 
-        if (RequiresApproval(request) && !_approvals.ValidateToken(request.ApprovalToken, request.ActorId, request.WorkspaceId, request.RequestedTools))
+        ApprovalRecord? approvalRecord = null;
+        if (RequiresApproval(request) && !_approvals.ValidateToken(request.ApprovalToken, request.ActorId, request.WorkspaceId, request.RequestedTools, out approvalRecord))
         {
             var denied = Denied(
                 request,
@@ -413,6 +501,14 @@ public sealed class LeaseGovernor : IDisposable
             IdempotencyKey = request.IdempotencyKey,
             Request = request,
             Constraints = constraints,
+            ApprovalChain = approvalRecord?.Reviews.Select(r => new ApprovalDecisionTrace
+            {
+                ReviewerId = r.ReviewerId,
+                Decision = r.Decision,
+                ReviewedAtUtc = r.ReviewedAtUtc,
+                Comment = r.Comment,
+                Scope = r.Scope
+            }).ToList() ?? new List<ApprovalDecisionTrace>(),
             ReservedComputeUnits = Math.Max(1, request.EstimatedComputeUnits),
             AcquiredAtUtc = DateTimeOffset.UtcNow,
             ExpiresAtUtc = DateTimeOffset.UtcNow.Add(_options.LeaseTtl)
@@ -521,7 +617,15 @@ public sealed class LeaseGovernor : IDisposable
                     ActualCostCents = request.ActualCostCents,
                     Outcome = request.Outcome,
                     AuditEntryHash = auditResult.EntryHash,
-                    TimestampUtc = DateTimeOffset.UtcNow
+                    TimestampUtc = DateTimeOffset.UtcNow,
+                    ApprovalChain = lease.ApprovalChain.Select(r => new ApprovalDecisionTrace
+                    {
+                        ReviewerId = r.ReviewerId,
+                        Decision = r.Decision,
+                        ReviewedAtUtc = r.ReviewedAtUtc,
+                        Comment = r.Comment,
+                        Scope = r.Scope
+                    }).ToList()
                 }
                 : null
         };

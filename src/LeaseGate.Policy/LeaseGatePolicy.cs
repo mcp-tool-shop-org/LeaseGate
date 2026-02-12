@@ -35,6 +35,7 @@ public sealed class LeaseGatePolicy
     public List<ServiceAccountPolicy> ServiceAccounts { get; set; } = new();
     public List<ToolCategory> DeniedToolCategories { get; set; } = new();
     public List<ToolCategory> ApprovalRequiredToolCategories { get; set; } = new();
+    public Dictionary<ToolCategory, int> ApprovalReviewersByToolCategory { get; set; } = new();
     public List<string> AllowedFileRoots { get; set; } = new();
     public List<string> AllowedNetworkHosts { get; set; } = new();
     public int DefaultToolTimeoutMs { get; set; } = 2_000;

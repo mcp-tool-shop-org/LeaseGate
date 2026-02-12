@@ -122,6 +122,28 @@ public sealed class NamedPipeGovernorServer : IDisposable
                     };
                     break;
                 }
+                case "ListPendingApprovals":
+                {
+                    var payload = ProtocolJson.Deserialize<ApprovalQueueRequest>(request.PayloadJson);
+                    var result = _governor.ListPendingApprovals(payload);
+                    response = new PipeCommandResponse
+                    {
+                        Success = true,
+                        PayloadJson = ProtocolJson.Serialize(result)
+                    };
+                    break;
+                }
+                case "ReviewApproval":
+                {
+                    var payload = ProtocolJson.Deserialize<ReviewApprovalRequest>(request.PayloadJson);
+                    var result = _governor.ReviewApproval(payload);
+                    response = new PipeCommandResponse
+                    {
+                        Success = true,
+                        PayloadJson = ProtocolJson.Serialize(result)
+                    };
+                    break;
+                }
                 case "GetMetrics":
                 {
                     var result = _governor.GetMetricsSnapshot();

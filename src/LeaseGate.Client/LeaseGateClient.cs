@@ -40,6 +40,16 @@ public sealed class LeaseGateClient
         return SendAsync<DenyApprovalRequest, DenyApprovalResponse>("DenyApproval", request, cancellationToken);
     }
 
+    public Task<ApprovalQueueResponse> ListPendingApprovalsAsync(ApprovalQueueRequest request, CancellationToken cancellationToken)
+    {
+        return SendAsync<ApprovalQueueRequest, ApprovalQueueResponse>("ListPendingApprovals", request, cancellationToken);
+    }
+
+    public Task<ReviewApprovalResponse> ReviewApprovalAsync(ReviewApprovalRequest request, CancellationToken cancellationToken)
+    {
+        return SendAsync<ReviewApprovalRequest, ReviewApprovalResponse>("ReviewApproval", request, cancellationToken);
+    }
+
     public Task<MetricsSnapshot> GetMetricsAsync(CancellationToken cancellationToken)
     {
         return SendAsync<object, MetricsSnapshot>("GetMetrics", new { }, cancellationToken);
