@@ -17,6 +17,12 @@ public sealed class LeaseGatePolicy
     public int MaxToolOutputTokens { get; set; } = 4_000;
     public int MaxToolCallsPerLease { get; set; } = 6;
     public int MaxComputeUnits { get; set; } = 8;
+    public int RetryThresholdPerLease { get; set; } = 3;
+    public int ToolLoopThreshold { get; set; } = 4;
+    public int PolicyDenyCircuitBreakerThreshold { get; set; } = 5;
+    public int SpendSpikeCents { get; set; } = 20;
+    public int SafetyCooldownMs { get; set; } = 2_000;
+    public int ClampedMaxOutputTokens { get; set; } = 64;
     public int OrgDailyBudgetCents { get; set; } = 0;
     public int OrgMaxRequestsPerMinute { get; set; } = 0;
     public int OrgMaxTokensPerMinute { get; set; } = 0;

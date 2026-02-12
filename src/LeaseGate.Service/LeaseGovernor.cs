@@ -5,6 +5,7 @@ using LeaseGate.Service.Approvals;
 using LeaseGate.Service.Leases;
 using LeaseGate.Service.Telemetry;
 using LeaseGate.Service.TokenPools;
+using LeaseGate.Service.Safety;
 using LeaseGate.Service.ToolIsolation;
 using LeaseGate.Service.Tools;
 using LeaseGate.Storage;
@@ -26,6 +27,7 @@ public sealed class LeaseGovernor : IDisposable
     private readonly ToolSubLeaseStore _toolSubLeases;
     private readonly IsolatedToolRunner _toolRunner;
     private readonly ApprovalStore _approvals;
+    private readonly SafetyAutomationState _safety = new();
     private readonly MetricsRegistry _metrics;
     private readonly LeaseStore _leases = new();
     private readonly Timer _expiryTimer;
@@ -304,6 +306,28 @@ public sealed class LeaseGovernor : IDisposable
 
     public async Task<ToolExecutionResponse> ExecuteToolCallAsync(ToolExecutionRequest request, CancellationToken cancellationToken)
     {
+        if (_safety.RegisterToolLoopAndCheckThreshold(request.LeaseId, request.ToolId, _policy.CurrentSnapshot.Policy.ToolLoopThreshold))
+        {
+            var lease = _leases.GetByLeaseId(request.LeaseId);
+            if (lease is not null)
+            {
+                _safety.ApplyWorkspaceCircuitBreaker(
+                    lease.Request.WorkspaceId,
+                    TimeSpan.FromMilliseconds(_policy.CurrentSnapshot.Policy.SafetyCooldownMs),
+                    "tool_call_loop",
+                    $"tool {request.ToolId} repeated over threshold");
+            }
+
+            return new ToolExecutionResponse
+            {
+                Allowed = false,
+                Outcome = LeaseOutcome.PolicyDenied,
+                DeniedReason = "tool_loop_detected",
+                Recommendation = "tool loop detected; workspace circuit breaker applied",
+                IdempotencyKey = request.IdempotencyKey
+            };
+        }
+
         if (!_toolSubLeases.TryConsume(request.ToolSubLeaseId, request.LeaseId, request.ToolId, request.Category, out var subLease, out var denyReason) || subLease is null)
         {
             var denied = new ToolExecutionResponse
@@ -388,6 +412,39 @@ public sealed class LeaseGovernor : IDisposable
 
         request.OrgId = string.IsNullOrWhiteSpace(request.OrgId) ? "default-org" : request.OrgId;
 
+        if (_safety.IsWorkspaceCircuitBroken(request.WorkspaceId, DateTimeOffset.UtcNow) && string.IsNullOrWhiteSpace(request.ApprovalToken))
+        {
+            var denied = Denied(request, "workspace_circuit_breaker", _policy.CurrentSnapshot.Policy.SafetyCooldownMs, "workspace temporarily requires approval due to anomaly");
+            denied.FallbackPlan = BuildFallbackPlan(request, denied.DeniedReason, denied.RetryAfterMs);
+            await AuditDeniedAsync(request, denied, cancellationToken);
+            _metrics.RecordDeny("workspace_circuit_breaker");
+            return denied;
+        }
+
+        if (_safety.IsActorOnCooldown(request.ActorId, DateTimeOffset.UtcNow, out var cooldownRetry))
+        {
+            var denied = Denied(request, "actor_cooldown_active", cooldownRetry, "actor cooldown active after anomaly detection");
+            denied.FallbackPlan = BuildFallbackPlan(request, denied.DeniedReason, denied.RetryAfterMs);
+            await AuditDeniedAsync(request, denied, cancellationToken);
+            _metrics.RecordDeny("actor_cooldown_active");
+            return denied;
+        }
+
+        if (_safety.RegisterRetryAndCheckThreshold(request.IdempotencyKey, _policy.CurrentSnapshot.Policy.RetryThresholdPerLease))
+        {
+            _safety.ApplyActorCooldown(
+                request.ActorId,
+                TimeSpan.FromMilliseconds(_policy.CurrentSnapshot.Policy.SafetyCooldownMs),
+                "retry_storm",
+                "too many retries for same idempotency key");
+        }
+
+        var outputClamp = _safety.GetActorOutputClamp(request.ActorId);
+        if (outputClamp.HasValue)
+        {
+            request.MaxOutputTokens = Math.Min(request.MaxOutputTokens, outputClamp.Value);
+        }
+
         if (!AuthorizePrincipal(request, out var principalDeniedReason, out var principalRecommendation))
         {
             var denied = Denied(request, principalDeniedReason, null, principalRecommendation);
@@ -425,6 +482,15 @@ public sealed class LeaseGovernor : IDisposable
         var policyDecision = _policy.Evaluate(request);
         if (!policyDecision.Allowed)
         {
+            if (_safety.RegisterPolicyDenyAndCheckThreshold(request.WorkspaceId, _policy.CurrentSnapshot.Policy.PolicyDenyCircuitBreakerThreshold))
+            {
+                _safety.ApplyWorkspaceCircuitBreaker(
+                    request.WorkspaceId,
+                    TimeSpan.FromMilliseconds(_policy.CurrentSnapshot.Policy.SafetyCooldownMs),
+                    "repeated_policy_denials",
+                    "workspace entered circuit breaker due to repeated policy denies");
+            }
+
             var denied = Denied(request, policyDecision.DeniedReason, null, policyDecision.Recommendation);
             await AuditDeniedAsync(request, denied, cancellationToken);
             _metrics.RecordDeny(policyDecision.DeniedReason);
@@ -807,6 +873,19 @@ public sealed class LeaseGovernor : IDisposable
         _concurrency.Release();
         _compute.Release(lease.ReservedComputeUnits);
         _budget.Settle(lease.Request.EstimatedCostCents, request.ActualCostCents);
+        if (request.ActualCostCents >= _policy.CurrentSnapshot.Policy.SpendSpikeCents)
+        {
+            _safety.ApplyActorClamp(
+                lease.Request.ActorId,
+                _policy.CurrentSnapshot.Policy.ClampedMaxOutputTokens,
+                "spend_spike",
+                $"actualCostCents={request.ActualCostCents}");
+            _safety.ApplyActorCooldown(
+                lease.Request.ActorId,
+                TimeSpan.FromMilliseconds(_policy.CurrentSnapshot.Policy.SafetyCooldownMs),
+                "spend_spike",
+                "cooldown due to spend spike");
+        }
         _toolSubLeases.RemoveByLease(request.LeaseId);
         _stateStore?.RemoveLease(request.LeaseId);
         PersistBudgetAndRate();
@@ -871,6 +950,48 @@ public sealed class LeaseGovernor : IDisposable
                 }
                 : null
         };
+    }
+
+    public ExportRunawayReportResponse ExportRunawayReport(ExportRunawayReportRequest request)
+    {
+        try
+        {
+            var outputPath = string.IsNullOrWhiteSpace(request.OutputPath)
+                ? Path.Combine(Path.GetTempPath(), $"leasegate-runaway-report-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}.json")
+                : request.OutputPath;
+
+            var directory = Path.GetDirectoryName(outputPath);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            var report = new
+            {
+                GeneratedAtUtc = DateTimeOffset.UtcNow,
+                Interventions = _safety.SnapshotInterventions()
+            };
+
+            File.WriteAllText(outputPath, ProtocolJson.Serialize(report));
+
+            return new ExportRunawayReportResponse
+            {
+                Exported = true,
+                OutputPath = outputPath,
+                Message = "runaway report exported",
+                IdempotencyKey = request.IdempotencyKey
+            };
+        }
+        catch (Exception ex)
+        {
+            return new ExportRunawayReportResponse
+            {
+                Exported = false,
+                OutputPath = request.OutputPath,
+                Message = ex.Message,
+                IdempotencyKey = request.IdempotencyKey
+            };
+        }
     }
 
     private LeaseConstraints BuildConstraints(AcquireLeaseRequest request)

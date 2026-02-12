@@ -175,6 +175,17 @@ public sealed class NamedPipeGovernorServer : IDisposable
                     };
                     break;
                 }
+                case "ExportRunawayReport":
+                {
+                    var payload = ProtocolJson.Deserialize<ExportRunawayReportRequest>(request.PayloadJson);
+                    var result = _governor.ExportRunawayReport(payload);
+                    response = new PipeCommandResponse
+                    {
+                        Success = true,
+                        PayloadJson = ProtocolJson.Serialize(result)
+                    };
+                    break;
+                }
                 case "StagePolicyBundle":
                 {
                     var payload = ProtocolJson.Deserialize<PolicyBundle>(request.PayloadJson);

@@ -65,6 +65,11 @@ public sealed class LeaseGateClient
         return SendAsync<ExportDiagnosticsRequest, ExportDiagnosticsResponse>("ExportDiagnostics", request, cancellationToken);
     }
 
+    public Task<ExportRunawayReportResponse> ExportRunawayReportAsync(ExportRunawayReportRequest request, CancellationToken cancellationToken)
+    {
+        return SendAsync<ExportRunawayReportRequest, ExportRunawayReportResponse>("ExportRunawayReport", request, cancellationToken);
+    }
+
     public Task<StagePolicyBundleResponse> StagePolicyBundleAsync(PolicyBundle bundle, CancellationToken cancellationToken)
     {
         return SendAsync<PolicyBundle, StagePolicyBundleResponse>("StagePolicyBundle", bundle, cancellationToken);

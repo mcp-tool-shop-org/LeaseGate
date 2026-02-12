@@ -357,6 +357,20 @@ public sealed class ExportSummaryResponse
     public string IdempotencyKey { get; set; } = string.Empty;
 }
 
+public sealed class ExportRunawayReportRequest
+{
+    public string OutputPath { get; set; } = string.Empty;
+    public string IdempotencyKey { get; set; } = string.Empty;
+}
+
+public sealed class ExportRunawayReportResponse
+{
+    public bool Exported { get; set; }
+    public string OutputPath { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+    public string IdempotencyKey { get; set; } = string.Empty;
+}
+
 public sealed class GovernorStatusResponse
 {
     public DateTimeOffset TimestampUtc { get; set; }
