@@ -3,7 +3,9 @@
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/mcp-tool-shop-org/LeaseGate/main/assets/logo-leasegate.png" alt="LeaseGate" width="400">
+  
+            <img src="https://raw.githubusercontent.com/mcp-tool-shop-org/brand/main/logos/LeaseGate/readme.png"
+           alt="LeaseGate" width="400">
 </p>
 
 <p align="center">
