@@ -1,14 +1,31 @@
 <p align="center">
-  <img src="logo.jpg" alt="LeaseGate" width="500">
+  <a href="README.ja.md">日本語</a> | <a href="README.zh.md">中文</a> | <a href="README.es.md">Español</a> | <a href="README.fr.md">Français</a> | <a href="README.hi.md">हिन्दी</a> | <a href="README.it.md">Italiano</a> | <a href="README.pt-BR.md">Português (BR)</a>
 </p>
 
-# LeaseGate
+<p align="center">
+  <img src="https://raw.githubusercontent.com/mcp-tool-shop-org/LeaseGate/main/assets/logo-leasegate.png" alt="LeaseGate" width="400">
+</p>
 
-[![Build](https://github.com/mcp-tool-shop-org/LeaseGate/actions/workflows/policy-ci.yml/badge.svg)](https://github.com/mcp-tool-shop-org/LeaseGate/actions)
-[![Version](https://img.shields.io/badge/version-v0.1.0-blue)](https://github.com/mcp-tool-shop-org/LeaseGate/releases/tag/v0.1.0)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+<p align="center">
+  <a href="https://github.com/mcp-tool-shop-org/LeaseGate/actions/workflows/policy-ci.yml"><img src="https://github.com/mcp-tool-shop-org/LeaseGate/actions/workflows/policy-ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow" alt="MIT License"></a>
+  <a href="https://mcp-tool-shop-org.github.io/LeaseGate/"><img src="https://img.shields.io/badge/Landing_Page-live-blue" alt="Landing Page"></a>
+</p>
 
-LeaseGate is a local-first AI governance control plane that issues execution leases, enforces policy and budgets, and produces tamper-evident governance evidence.
+**Local-first AI governance control plane that issues execution leases, enforces policy and budgets, and produces tamper-evident governance evidence.**
+
+---
+
+## At a Glance
+
+- **Lease admission** -- TTL-based execution leases with multi-pool governance
+- **Policy enforcement** -- GitOps YAML policies with signed bundle stage/activate flow
+- **Tamper-evident audit** -- hash-chained append-only entries and release receipts
+- **Safety automation** -- cooldown, clamp, and circuit-breaker patterns
+- **Tool isolation** -- governed sub-leases with command injection prevention
+- **Distributed mode** -- Hub/Agent architecture with degraded local fallback
+
+---
 
 ## Current Status — v0.1.0
 
@@ -42,6 +59,8 @@ Phases 1-5 are implemented, tested, and security-hardened, including:
 - Policy reload error tracking and exposure
 - External key support for governance receipt signing
 
+---
+
 ## Solution Layout
 
 ```text
@@ -69,6 +88,8 @@ policies/
   workspaces/*.yml
 ```
 
+---
+
 ## Quick Start
 
 ### Build and test
@@ -93,6 +114,8 @@ dotnet run --project samples/LeaseGate.SampleCli -- export-proof
 dotnet run --project samples/LeaseGate.SampleCli -- verify-receipt
 ```
 
+---
+
 ## Integration Snapshot
 
 Typical application flow:
@@ -104,6 +127,8 @@ Typical application flow:
 5. Persist/verify receipt evidence when needed.
 
 See [docs/Protocol.md](docs/Protocol.md) and [docs/Architecture.md](docs/Architecture.md).
+
+---
 
 ## GitOps Policy Workflow
 
@@ -119,7 +144,9 @@ CI validation and bundle signing are provided by:
 - `.github/workflows/policy-ci.yml`
 - `scripts/build-policy-bundle.ps1`
 
-## Documentation Index
+---
+
+## Documentation
 
 - [docs/Architecture.md](docs/Architecture.md)
 - [docs/Protocol.md](docs/Protocol.md)
@@ -129,3 +156,9 @@ CI validation and bundle signing are provided by:
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [CHANGELOG.md](CHANGELOG.md)
 - [SECURITY.md](SECURITY.md)
+
+---
+
+## License
+
+[MIT](LICENSE)
