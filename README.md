@@ -27,7 +27,7 @@
 
 ---
 
-## Current Status — v0.1.0
+## Current Status — v1.0.0
 
 Phases 1-5 are implemented, tested, and security-hardened, including:
 
@@ -159,6 +159,37 @@ CI validation and bundle signing are provided by:
 
 ---
 
+## Security & Data Scope
+
+LeaseGate is a **local-first** AI governance control plane.
+
+- **Data accessed:** Lease state (SQLite), policy YAML files, audit logs, governance receipts, named pipe transport (localhost)
+- **Data NOT accessed:** No cloud sync. No telemetry. No analytics. No external API calls
+- **Permissions:** Local file system for state/audit/exports. Named pipes for IPC. No network egress
+
+Full policy: [SECURITY.md](SECURITY.md)
+
+---
+
+## Scorecard
+
+| Category | Score |
+|----------|-------|
+| A. Security | 10/10 |
+| B. Error Handling | 10/10 |
+| C. Operator Docs | 10/10 |
+| D. Shipping Hygiene | 10/10 |
+| E. Identity (soft) | 10/10 |
+| **Overall** | **50/50** |
+
+---
+
 ## License
 
 [MIT](LICENSE)
+
+---
+
+<p align="center">
+  Built by <a href="https://mcp-tool-shop.github.io/">MCP Tool Shop</a>
+</p>

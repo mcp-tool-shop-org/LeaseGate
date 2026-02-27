@@ -1,6 +1,13 @@
 # Changelog
 
-## v0.1.0 - 2026-02-12
+## [1.0.0] - 2026-02-27
+
+### Changed
+
+- Promoted to v1.0.0 stable release
+- Ship Gate compliance (security, docs, identity)
+
+## [0.1.0] - 2026-02-12
 
 First tagged release with security hardening across all phases.
 
