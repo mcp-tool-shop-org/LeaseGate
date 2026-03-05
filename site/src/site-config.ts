@@ -14,7 +14,7 @@ export const config: SiteConfig = {
     headlineAccent: 'governance before the model runs.',
     description: 'Local-first AI governance control plane. Lease admission, multi-pool policy enforcement, hash-chained audit, and tamper-evident proof export \u2014 all before a single token is spent.',
     primaryCta: { href: '#quick-start', label: 'Get started' },
-    secondaryCta: { href: '#features', label: 'Learn more' },
+    secondaryCta: { href: 'handbook/', label: 'Read the Handbook' },
     previews: [
       { label: 'Build', code: 'dotnet build LeaseGate.sln' },
       { label: 'Test', code: 'dotnet test LeaseGate.sln' },
